@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 import csv
 from fastapi.responses import HTMLResponse
 
@@ -18,7 +19,7 @@ CODIGO_ACTUAL = "TALLERV1403"
 class AttendanceRequest(BaseModel):
     email: str
     codigo: str
-    clase: str | None = None
+    clase: Optional[str] = None
 
 
 class AttendanceRequest(BaseModel):
