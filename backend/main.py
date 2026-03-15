@@ -359,7 +359,7 @@ def load_students():
     }
 
 
-@app.post("/nuevo_codigo")
+@app.get("/nuevo_codigo")
 def nuevo_codigo():
     global CODIGO_ACTUAL
     CODIGO_ACTUAL = generar_codigo()
