@@ -15,16 +15,16 @@ attendance = []
 # Código oral del día/clase
 CODIGO_ACTUAL = "TALLERV1403"
 
+class Student(BaseModel):
+    nombre: str
+    apellido: str
+    email: str
+
 
 class AttendanceRequest(BaseModel):
     email: str
     codigo: str
     clase: Optional[str] = None
-
-
-class AttendanceRequest(BaseModel):
-    email: str
-    codigo: str
 
 
 @app.get("/")
