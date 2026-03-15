@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+import os
 import csv
 from fastapi.responses import HTMLResponse
 
@@ -14,6 +15,13 @@ attendance = []
 
 # Código oral del día/clase
 CODIGO_ACTUAL = "TALLERV1403"
+
+@app.on_event("startup")
+def cargar_estudiantes():
+    try:
+        load_students()
+    except Exception as e:
+        print("Error cargando estudiantes:", e)
 
 class Student(BaseModel):
     nombre: str
@@ -177,7 +185,30 @@ def ver_asistencia():
         "total": len(attendance),
         "attendance": attendance
     }
+def guardar_asistencia_csv(registro):
+    os.makedirs("data", exist_ok=True)
+    archivo = "data/asistencia.csv"
 
+    existe = os.path.isfile(archivo)
+
+    with open(archivo, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["clase", "nombre", "apellido", "email", "fecha", "hora", "codigo_ingresado"]
+        )
+
+        if not existe:
+            writer.writeheader()
+
+        writer.writerow({
+            "clase": registro["clase"],
+            "nombre": registro["nombre"],
+            "apellido": registro["apellido"],
+            "email": registro["email"],
+            "fecha": registro["fecha"],
+            "hora": registro["hora"],
+            "codigo_ingresado": registro["codigo_ingresado"]
+        })
 
 @app.post("/attendance")
 def registrar_asistencia(data: AttendanceRequest):
@@ -209,11 +240,14 @@ def registrar_asistencia(data: AttendanceRequest):
 }
 
     attendance.append(registro)
+    guardar_asistencia_csv(registro)
 
     return {
         "mensaje": "Asistencia registrada",
         "registro": registro
     }
+
+
 
 
 @app.get("/load_students")
