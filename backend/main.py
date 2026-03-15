@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
@@ -186,15 +186,25 @@ def ver_asistencia():
         "attendance": attendance
     }
 def guardar_asistencia_csv(registro):
+
     os.makedirs("data", exist_ok=True)
     archivo = "data/asistencia.csv"
 
     existe = os.path.isfile(archivo)
 
     with open(archivo, "a", newline="", encoding="utf-8") as f:
+
         writer = csv.DictWriter(
             f,
-            fieldnames=["clase", "nombre", "apellido", "email", "fecha", "hora", "codigo_ingresado"]
+            fieldnames=[
+                "clase",
+                "nombre",
+                "email",
+                "codigo",
+                "hora",
+                "ip",
+                "user_agent"
+            ]
         )
 
         if not existe:
@@ -203,15 +213,15 @@ def guardar_asistencia_csv(registro):
         writer.writerow({
             "clase": registro["clase"],
             "nombre": registro["nombre"],
-            "apellido": registro["apellido"],
             "email": registro["email"],
-            "fecha": registro["fecha"],
+            "codigo": registro["codigo"],
             "hora": registro["hora"],
-            "codigo_ingresado": registro["codigo_ingresado"]
+            "ip": registro["ip"],
+            "user_agent": registro["user_agent"]
         })
 
 @app.post("/attendance")
-def registrar_asistencia(data: AttendanceRequest):
+def registrar_asistencia(data: AttendanceRequest, request: Request):
     email = data.email.strip().lower()
     codigo = data.codigo.strip()
 
@@ -229,14 +239,27 @@ def registrar_asistencia(data: AttendanceRequest):
     if ya_registrado:
         raise HTTPException(status_code=400, detail="La asistencia ya fue registrada")
 
-    registro = {
+# detectar IP real
+forwarded_for = request.headers.get("x-forwarded-for")
+cf_ip = request.headers.get("cf-connecting-ip")
+
+if cf_ip:
+    ip_cliente = cf_ip
+elif forwarded_for:
+    ip_cliente = forwarded_for.split(",")[0].strip()
+else:
+    ip_cliente = request.client.host if request.client else "desconocida"
+
+user_agent = request.headers.get("user-agent", "desconocido")
+
+registro = {
+    "clase": clase_actual,
     "nombre": estudiante["nombre"],
-    "apellido": estudiante["apellido"],
     "email": estudiante["email"],
-    "codigo_ingresado": codigo,
-    "clase": data.clase if data.clase else "sin_clase",
-    "fecha": datetime.now().strftime("%Y-%m-%d"),
-    "hora": datetime.now().strftime("%H:%M:%S")
+    "codigo": codigo,
+    "hora": datetime.now().strftime("%H:%M:%S"),
+    "ip": ip_cliente,
+    "user_agent": user_agent
 }
 
     attendance.append(registro)
