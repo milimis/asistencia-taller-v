@@ -6,7 +6,6 @@ import os
 import csv
 from fastapi.responses import HTMLResponse
 
-
 app = FastAPI()
 
 # Base en memoria
@@ -16,12 +15,14 @@ attendance = []
 # Código oral del día/clase
 CODIGO_ACTUAL = "TALLERV1403"
 
+
 @app.on_event("startup")
 def cargar_estudiantes():
     try:
         load_students()
     except Exception as e:
         print("Error cargando estudiantes:", e)
+
 
 class Student(BaseModel):
     nombre: str
@@ -41,7 +42,9 @@ def home():
         "mensaje": "Servidor de asistencia funcionando",
         "codigo_actual": CODIGO_ACTUAL
     }
-#endpoint
+
+
+# endpoint
 @app.get("/form", response_class=HTMLResponse)
 def formulario_asistencia(clase: str = Query(default="sin_clase")):
     return f"""
@@ -135,7 +138,12 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                     const data = await response.json();
 
                     if (response.ok) {{
-                        resultado.innerHTML = "✅ Asistencia registrada para " + data.registro.nombre + " " + data.registro.apellido + " (" + data.registro.clase + ")";
+                        resultado.innerHTML =
+                            "✅ Asistencia registrada para " +
+                            data.registro.nombre + " " +
+                            data.registro.apellido + " (" +
+                            data.registro.clase + ") - " +
+                            data.registro.fecha;
                         resultado.style.color = "green";
                     }} else {{
                         resultado.innerHTML = "❌ " + data.detail;
@@ -146,7 +154,6 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
         </body>
     </html>
     """
-
 
 
 @app.post("/students")
@@ -185,20 +192,22 @@ def ver_asistencia():
         "total": len(attendance),
         "attendance": attendance
     }
-def guardar_asistencia_csv(registro):
 
+
+def guardar_asistencia_csv(registro):
     os.makedirs("data", exist_ok=True)
     archivo = "data/asistencia.csv"
 
     existe = os.path.isfile(archivo)
 
     with open(archivo, "a", newline="", encoding="utf-8") as f:
-
         writer = csv.DictWriter(
             f,
             fieldnames=[
+                "fecha",
                 "clase",
                 "nombre",
+                "apellido",
                 "email",
                 "codigo",
                 "hora",
@@ -211,14 +220,17 @@ def guardar_asistencia_csv(registro):
             writer.writeheader()
 
         writer.writerow({
+            "fecha": registro["fecha"],
             "clase": registro["clase"],
             "nombre": registro["nombre"],
+            "apellido": registro["apellido"],
             "email": registro["email"],
             "codigo": registro["codigo"],
             "hora": registro["hora"],
             "ip": registro["ip"],
             "user_agent": registro["user_agent"]
         })
+
 
 @app.post("/attendance")
 def registrar_asistencia(data: AttendanceRequest, request: Request):
@@ -233,34 +245,39 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
 
     clase_actual = data.clase if data.clase else "sin_clase"
+
     ya_registrado = next(
-    (a for a in attendance if a["email"] == email and a.get("clase") == clase_actual),
-    None)
+        (a for a in attendance if a["email"] == email and a.get("clase") == clase_actual),
+        None
+    )
+
     if ya_registrado:
         raise HTTPException(status_code=400, detail="La asistencia ya fue registrada")
 
-# detectar IP real
-forwarded_for = request.headers.get("x-forwarded-for")
-cf_ip = request.headers.get("cf-connecting-ip")
+    # Detectar IP real
+    forwarded_for = request.headers.get("x-forwarded-for")
+    cf_ip = request.headers.get("cf-connecting-ip")
 
-if cf_ip:
-    ip_cliente = cf_ip
-elif forwarded_for:
-    ip_cliente = forwarded_for.split(",")[0].strip()
-else:
-    ip_cliente = request.client.host if request.client else "desconocida"
+    if cf_ip:
+        ip_cliente = cf_ip
+    elif forwarded_for:
+        ip_cliente = forwarded_for.split(",")[0].strip()
+    else:
+        ip_cliente = request.client.host if request.client else "desconocida"
 
-user_agent = request.headers.get("user-agent", "desconocido")
+    user_agent = request.headers.get("user-agent", "desconocido")
 
-registro = {
-    "clase": clase_actual,
-    "nombre": estudiante["nombre"],
-    "email": estudiante["email"],
-    "codigo": codigo,
-    "hora": datetime.now().strftime("%H:%M:%S"),
-    "ip": ip_cliente,
-    "user_agent": user_agent
-}
+    registro = {
+        "fecha": datetime.now().strftime("%Y-%m-%d"),
+        "clase": clase_actual,
+        "nombre": estudiante["nombre"],
+        "apellido": estudiante["apellido"],
+        "email": estudiante["email"],
+        "codigo": codigo,
+        "hora": datetime.now().strftime("%H:%M:%S"),
+        "ip": ip_cliente,
+        "user_agent": user_agent
+    }
 
     attendance.append(registro)
     guardar_asistencia_csv(registro)
@@ -271,8 +288,6 @@ registro = {
     }
 
 
-
-
 @app.get("/load_students")
 def load_students():
     cargados = 0
@@ -280,7 +295,6 @@ def load_students():
     with open("data/lista_prueba.csv", newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
         print(reader.fieldnames)
-
 
         for row in reader:
             nombre = row["nombre"].strip()
