@@ -4,7 +4,10 @@ from datetime import datetime
 from typing import Optional
 import os
 import csv
-from fastapi.responses import HTMLResponse
+import random
+import string
+import qrcode
+from fastapi.responses import HTMLResponse, FileResponse
 
 app = FastAPI()
 
@@ -12,8 +15,22 @@ app = FastAPI()
 students = []
 attendance = []
 
+
+def generar_codigo():
+    letras_numeros = string.ascii_uppercase + string.digits
+    sufijo = "".join(random.choices(letras_numeros, k=4))
+    return f"TALLER-{sufijo}"
+
+
+# URL base del sistema
+# En Render usa la URL pública automáticamente
+# En local cae a localhost
+BASE_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv(
+    "BASE_URL", "http://localhost:8000"
+)
+
 # Código oral del día/clase
-CODIGO_ACTUAL = "TALLERV1403"
+CODIGO_ACTUAL = generar_codigo()
 
 
 @app.on_event("startup")
@@ -40,11 +57,11 @@ class AttendanceRequest(BaseModel):
 def home():
     return {
         "mensaje": "Servidor de asistencia funcionando",
-        "codigo_actual": CODIGO_ACTUAL
+        "codigo_actual": CODIGO_ACTUAL,
+        "base_url": BASE_URL,
     }
 
 
-# endpoint
 @app.get("/form", response_class=HTMLResponse)
 def formulario_asistencia(clase: str = Query(default="sin_clase")):
     return f"""
@@ -127,26 +144,31 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                     const codigo = document.getElementById("codigo").value;
                     const resultado = document.getElementById("resultado");
 
-                    const response = await fetch("/attendance", {{
-                        method: "POST",
-                        headers: {{
-                            "Content-Type": "application/json"
-                        }},
-                        body: JSON.stringify({{ email, codigo, clase }})
-                    }});
+                    try {{
+                        const response = await fetch("/attendance", {{
+                            method: "POST",
+                            headers: {{
+                                "Content-Type": "application/json"
+                            }},
+                            body: JSON.stringify({{ email, codigo, clase }})
+                        }});
 
-                    const data = await response.json();
+                        const data = await response.json();
 
-                    if (response.ok) {{
-                        resultado.innerHTML =
-                            "✅ Asistencia registrada para " +
-                            data.registro.nombre + " " +
-                            data.registro.apellido + " (" +
-                            data.registro.clase + ") - " +
-                            data.registro.fecha;
-                        resultado.style.color = "green";
-                    }} else {{
-                        resultado.innerHTML = "❌ " + data.detail;
+                        if (response.ok) {{
+                            resultado.innerHTML =
+                                "✅ Asistencia registrada para " +
+                                data.registro.nombre + " " +
+                                data.registro.apellido + " (" +
+                                data.registro.clase + ") - " +
+                                data.registro.fecha;
+                            resultado.style.color = "green";
+                        }} else {{
+                            resultado.innerHTML = "❌ " + data.detail;
+                            resultado.style.color = "red";
+                        }}
+                    }} catch (error) {{
+                        resultado.innerHTML = "❌ Error de conexión con el servidor";
                         resultado.style.color = "red";
                     }}
                 }}
@@ -167,14 +189,14 @@ def create_student(student: Student):
     nuevo = {
         "nombre": student.nombre.strip(),
         "apellido": student.apellido.strip(),
-        "email": email
+        "email": email,
     }
 
     students.append(nuevo)
 
     return {
         "mensaje": "Estudiante registrado",
-        "student": nuevo
+        "student": nuevo,
     }
 
 
@@ -182,7 +204,7 @@ def create_student(student: Student):
 def list_students():
     return {
         "total": len(students),
-        "students": students
+        "students": students,
     }
 
 
@@ -190,7 +212,7 @@ def list_students():
 def ver_asistencia():
     return {
         "total": len(attendance),
-        "attendance": attendance
+        "attendance": attendance,
     }
 
 
@@ -212,24 +234,26 @@ def guardar_asistencia_csv(registro):
                 "codigo",
                 "hora",
                 "ip",
-                "user_agent"
-            ]
+                "user_agent",
+            ],
         )
 
         if not existe:
             writer.writeheader()
 
-        writer.writerow({
-            "fecha": registro["fecha"],
-            "clase": registro["clase"],
-            "nombre": registro["nombre"],
-            "apellido": registro["apellido"],
-            "email": registro["email"],
-            "codigo": registro["codigo"],
-            "hora": registro["hora"],
-            "ip": registro["ip"],
-            "user_agent": registro["user_agent"]
-        })
+        writer.writerow(
+            {
+                "fecha": registro["fecha"],
+                "clase": registro["clase"],
+                "nombre": registro["nombre"],
+                "apellido": registro["apellido"],
+                "email": registro["email"],
+                "codigo": registro["codigo"],
+                "hora": registro["hora"],
+                "ip": registro["ip"],
+                "user_agent": registro["user_agent"],
+            }
+        )
 
 
 @app.post("/attendance")
@@ -248,7 +272,7 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
 
     ya_registrado = next(
         (a for a in attendance if a["email"] == email and a.get("clase") == clase_actual),
-        None
+        None,
     )
 
     if ya_registrado:
@@ -266,17 +290,18 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         ip_cliente = request.client.host if request.client else "desconocida"
 
     user_agent = request.headers.get("user-agent", "desconocido")
+    ahora = datetime.now()
 
     registro = {
-        "fecha": datetime.now().strftime("%Y-%m-%d"),
+        "fecha": ahora.strftime("%Y-%m-%d"),
         "clase": clase_actual,
         "nombre": estudiante["nombre"],
         "apellido": estudiante["apellido"],
         "email": estudiante["email"],
         "codigo": codigo,
-        "hora": datetime.now().strftime("%H:%M:%S"),
+        "hora": ahora.strftime("%H:%M:%S"),
         "ip": ip_cliente,
-        "user_agent": user_agent
+        "user_agent": user_agent,
     }
 
     attendance.append(registro)
@@ -284,22 +309,33 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
 
     return {
         "mensaje": "Asistencia registrada",
-        "registro": registro
+        "registro": registro,
     }
 
 
 @app.get("/load_students")
 def load_students():
     cargados = 0
+    archivo = "data/lista_prueba.csv"
 
-    with open("data/lista_prueba.csv", newline="", encoding="utf-8-sig") as f:
+    if not os.path.isfile(archivo):
+        raise HTTPException(status_code=404, detail="No se encontró el archivo de estudiantes")
+
+    with open(archivo, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
-        print(reader.fieldnames)
+        fieldnames = reader.fieldnames
+
+        if not fieldnames or "email" not in fieldnames:
+            f.seek(0)
+            reader = csv.DictReader(f, delimiter=",")
+            fieldnames = reader.fieldnames
+
+        print("Columnas detectadas:", fieldnames)
 
         for row in reader:
-            nombre = row["nombre"].strip()
-            apellido = row["apellido"].strip()
-            email = row["email"].strip().lower()
+            nombre = row.get("nombre", "").strip()
+            apellido = row.get("apellido", "").strip()
+            email = row.get("email", "").strip().lower()
 
             if not nombre or not apellido or not email:
                 continue
@@ -307,7 +343,7 @@ def load_students():
             student = {
                 "nombre": nombre,
                 "apellido": apellido,
-                "email": email
+                "email": email,
             }
 
             ya_existe = next((s for s in students if s["email"] == email), None)
@@ -319,8 +355,32 @@ def load_students():
     return {
         "mensaje": "Estudiantes cargados",
         "cantidad_cargados": cargados,
-        "total_estudiantes": len(students)
+        "total_estudiantes": len(students),
     }
+
+
+@app.post("/nuevo_codigo")
+def nuevo_codigo():
+    global CODIGO_ACTUAL
+    CODIGO_ACTUAL = generar_codigo()
+
+    return {
+        "mensaje": "Nuevo código generado",
+        "codigo_actual": CODIGO_ACTUAL,
+    }
+
+
+@app.get("/qr")
+def generar_qr(clase: str = "sin_clase"):
+    url = f"{BASE_URL}/form?clase={clase}"
+
+    os.makedirs("data", exist_ok=True)
+    ruta = "data/qr_clase.png"
+
+    img = qrcode.make(url)
+    img.save(ruta)
+
+    return FileResponse(ruta, media_type="image/png", filename="qr_clase.png")
 
 
 @app.post("/reset_attendance")
