@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
 import csv
@@ -15,10 +15,10 @@ attendance = []
 CODIGO_ACTUAL = "TALLERV1403"
 
 
-class Student(BaseModel):
-    nombre: str
-    apellido: str
+class AttendanceRequest(BaseModel):
     email: str
+    codigo: str
+    clase: str | None = None
 
 
 class AttendanceRequest(BaseModel):
@@ -32,36 +32,45 @@ def home():
         "mensaje": "Servidor de asistencia funcionando",
         "codigo_actual": CODIGO_ACTUAL
     }
+#endpoint
 @app.get("/form", response_class=HTMLResponse)
-def formulario_asistencia():
-    return """
+def formulario_asistencia(clase: str = Query(default="sin_clase")):
+    return f"""
     <html>
         <head>
             <title>Asistencia Taller V</title>
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <style>
-                body {
+                body {{
                     font-family: Arial, sans-serif;
                     max-width: 420px;
                     margin: 40px auto;
                     padding: 20px;
                     background: #f7f7f7;
-                }
-                .card {
+                }}
+                .card {{
                     background: white;
                     padding: 24px;
                     border-radius: 12px;
                     box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-                }
-                h1 {
+                }}
+                h1 {{
                     font-size: 24px;
                     margin-bottom: 10px;
-                }
-                p {
+                }}
+                p {{
                     color: #555;
                     margin-bottom: 20px;
-                }
-                input, button {
+                }}
+                .clase {{
+                    font-size: 14px;
+                    color: #222;
+                    background: #efefef;
+                    padding: 10px;
+                    border-radius: 8px;
+                    margin-bottom: 16px;
+                }}
+                input, button {{
                     width: 100%;
                     padding: 12px;
                     margin-top: 10px;
@@ -69,25 +78,26 @@ def formulario_asistencia():
                     border: 1px solid #ccc;
                     font-size: 16px;
                     box-sizing: border-box;
-                }
-                button {
+                }}
+                button {{
                     background: black;
                     color: white;
                     border: none;
                     cursor: pointer;
-                }
-                button:hover {
+                }}
+                button:hover {{
                     opacity: 0.9;
-                }
-                #resultado {
+                }}
+                #resultado {{
                     margin-top: 18px;
                     font-weight: bold;
-                }
+                }}
             </style>
         </head>
         <body>
             <div class="card">
                 <h1>Asistencia Taller V</h1>
+                <div class="clase">Clase: {clase}</div>
                 <p>Ingresá tu email y el código indicado en clase.</p>
 
                 <input type="email" id="email" placeholder="tuemail@ejemplo.com" />
@@ -98,29 +108,31 @@ def formulario_asistencia():
             </div>
 
             <script>
-                async function registrar() {
+                const clase = "{clase}";
+
+                async function registrar() {{
                     const email = document.getElementById("email").value;
                     const codigo = document.getElementById("codigo").value;
                     const resultado = document.getElementById("resultado");
 
-                    const response = await fetch("/attendance", {
+                    const response = await fetch("/attendance", {{
                         method: "POST",
-                        headers: {
+                        headers: {{
                             "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({ email, codigo })
-                    });
+                        }},
+                        body: JSON.stringify({{ email, codigo, clase }})
+                    }});
 
                     const data = await response.json();
 
-                    if (response.ok) {
-                        resultado.innerHTML = "✅ Asistencia registrada para " + data.registro.nombre + " " + data.registro.apellido;
+                    if (response.ok) {{
+                        resultado.innerHTML = "✅ Asistencia registrada para " + data.registro.nombre + " " + data.registro.apellido + " (" + data.registro.clase + ")";
                         resultado.style.color = "green";
-                    } else {
+                    }} else {{
                         resultado.innerHTML = "❌ " + data.detail;
                         resultado.style.color = "red";
-                    }
-                }
+                    }}
+                }}
             </script>
         </body>
     </html>
@@ -178,18 +190,22 @@ def registrar_asistencia(data: AttendanceRequest):
     if not estudiante:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
 
-    ya_registrado = next((a for a in attendance if a["email"] == email), None)
+    clase_actual = data.clase if data.clase else "sin_clase"
+    ya_registrado = next(
+    (a for a in attendance if a["email"] == email and a.get("clase") == clase_actual),
+    None)
     if ya_registrado:
         raise HTTPException(status_code=400, detail="La asistencia ya fue registrada")
 
     registro = {
-        "nombre": estudiante["nombre"],
-        "apellido": estudiante["apellido"],
-        "email": estudiante["email"],
-        "codigo_ingresado": codigo,
-        "fecha": datetime.now().strftime("%Y-%m-%d"),
-        "hora": datetime.now().strftime("%H:%M:%S")
-    }
+    "nombre": estudiante["nombre"],
+    "apellido": estudiante["apellido"],
+    "email": estudiante["email"],
+    "codigo_ingresado": codigo,
+    "clase": data.clase if data.clase else "sin_clase",
+    "fecha": datetime.now().strftime("%Y-%m-%d"),
+    "hora": datetime.now().strftime("%H:%M:%S")
+}
 
     attendance.append(registro)
 
