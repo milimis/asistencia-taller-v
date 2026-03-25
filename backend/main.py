@@ -49,11 +49,44 @@ CODIGO_ACTUAL = generar_codigo()
 
 
 @app.on_event("startup")
-def cargar_estudiantes():
+def startup():
     try:
         load_students()
     except Exception as e:
         print("Error cargando estudiantes:", e)
+    try:
+        cargar_asistencia_csv()
+    except Exception as e:
+        print("Error cargando asistencia:", e)
+
+
+def cargar_asistencia_csv():
+    archivo = "data/asistencia.csv"
+    if not os.path.isfile(archivo):
+        return
+    with open(archivo, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            email = row.get("email", "").strip().lower()
+            clase = row.get("clase", "").strip()
+            ya_existe = next(
+                (a for a in attendance if a["email"] == email and a.get("clase") == clase),
+                None,
+            )
+            if not ya_existe:
+                attendance.append({
+                    "fecha": row.get("fecha", ""),
+                    "clase": clase,
+                    "nombre": row.get("nombre", ""),
+                    "apellido": row.get("apellido", ""),
+                    "email": email,
+                    "codigo": row.get("codigo", ""),
+                    "hora": row.get("hora", ""),
+                    "ip": row.get("ip", ""),
+                    "user_agent": row.get("user_agent", ""),
+                    "lat": row.get("lat") or None,
+                    "lon": row.get("lon") or None,
+                })
 
 
 class Student(BaseModel):
@@ -629,9 +662,14 @@ def panel_docente():
                 </div>
             </div>
 
-            <!-- Asistencia del día -->
+            <!-- Asistencia -->
             <div class="full-card">
-                <h2>Asistencia de hoy — <span id="fecha-hoy"></span></h2>
+                <h2>Asistencia</h2>
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
+                    <input type="date" id="filtro-fecha" style="padding:8px 10px; border:1px solid #ddd; border-radius:8px; font-size:14px;" />
+                    <button class="secondary" onclick="cargarAsistencia()">Ver</button>
+                    <span style="font-size:13px; color:#888;">Hoy: <a href="#" onclick="irAHoy()" style="color:#333;">volver a hoy</a></span>
+                </div>
                 <div class="contador"><span id="total">0</span> presentes</div>
                 <table>
                     <thead>
@@ -647,12 +685,12 @@ def panel_docente():
                         <tr><td colspan="5" style="color:#aaa">Cargando...</td></tr>
                     </tbody>
                 </table>
-                <div class="refresh-note">Se actualiza automáticamente cada 30 segundos.</div>
+                <div class="refresh-note">Se actualiza automáticamente cada 30 segundos (solo para la fecha seleccionada).</div>
             </div>
 
             <script>
                 const hoy = new Date().toISOString().split("T")[0];
-                document.getElementById("fecha-hoy").textContent = hoy;
+                document.getElementById("filtro-fecha").value = hoy;
 
                 async function cargarCodigo() {
                     const res = await fetch("/");
@@ -676,17 +714,23 @@ def panel_docente():
                     img.style.display = "block";
                 }
 
+                function irAHoy() {
+                    document.getElementById("filtro-fecha").value = hoy;
+                    cargarAsistencia();
+                }
+
                 async function cargarAsistencia() {
+                    const fecha = document.getElementById("filtro-fecha").value || hoy;
                     const res = await fetch("/attendance");
                     const data = await res.json();
-                    const registros = data.attendance.filter(r => r.fecha === hoy);
+                    const registros = data.attendance.filter(r => r.fecha === fecha);
                     registros.sort((a, b) => a.hora.localeCompare(b.hora));
 
                     document.getElementById("total").textContent = registros.length;
 
                     const tbody = document.getElementById("tabla-asistencia");
                     if (registros.length === 0) {
-                        tbody.innerHTML = "<tr><td colspan='5' style='color:#aaa'>Sin registros por ahora.</td></tr>";
+                        tbody.innerHTML = "<tr><td colspan='5' style='color:#aaa'>Sin registros para esta fecha.</td></tr>";
                         return;
                     }
                     tbody.innerHTML = registros.map((r, i) => `
