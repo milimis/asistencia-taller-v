@@ -7,8 +7,11 @@ import csv
 import random
 import string
 import math
+import pytz
 import qrcode
 from fastapi.responses import HTMLResponse, FileResponse
+
+TZ_UY = pytz.timezone("America/Montevideo")
 
 app = FastAPI()
 
@@ -400,7 +403,7 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         ip_cliente = request.client.host if request.client else "desconocida"
 
     user_agent = request.headers.get("user-agent", "desconocido")
-    ahora = datetime.now()
+    ahora = datetime.now(TZ_UY)
 
     registro = {
         "fecha": ahora.strftime("%Y-%m-%d"),
