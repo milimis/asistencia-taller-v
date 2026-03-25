@@ -6,6 +6,7 @@ import os
 import csv
 import random
 import string
+import math
 import qrcode
 from fastapi.responses import HTMLResponse, FileResponse
 
@@ -14,6 +15,20 @@ app = FastAPI()
 # Base en memoria
 students = []
 attendance = []
+
+# Coordenadas de la facultad y radio máximo permitido
+FACULTAD_LAT = -34.910281089334184
+FACULTAD_LON = -56.16376847335219
+RADIO_MAX_METROS = 150
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000  # radio de la Tierra en metros
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def generar_codigo():
@@ -51,6 +66,8 @@ class AttendanceRequest(BaseModel):
     email: str
     codigo: str
     clase: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 
 @app.get("/")
@@ -117,6 +134,15 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                 button:hover {{
                     opacity: 0.9;
                 }}
+                button:disabled {{
+                    background: #999;
+                    cursor: not-allowed;
+                }}
+                #geo-status {{
+                    margin-top: 12px;
+                    font-size: 14px;
+                    color: #555;
+                }}
                 #resultado {{
                     margin-top: 18px;
                     font-weight: bold;
@@ -131,18 +157,53 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
 
                 <input type="email" id="email" placeholder="tuemail@ejemplo.com" />
                 <input type="text" id="codigo" placeholder="Código de clase" />
-                <button onclick="registrar()">Registrar asistencia</button>
+                <button id="btn" onclick="registrar()" disabled>Verificando ubicación...</button>
 
+                <div id="geo-status">📍 Obteniendo tu ubicación...</div>
                 <div id="resultado"></div>
             </div>
 
             <script>
                 const clase = "{clase}";
+                let userLat = null;
+                let userLon = null;
+
+                function initGeo() {{
+                    if (!navigator.geolocation) {{
+                        document.getElementById("geo-status").innerHTML =
+                            "❌ Tu navegador no soporta geolocalización.";
+                        return;
+                    }}
+
+                    navigator.geolocation.getCurrentPosition(
+                        function(pos) {{
+                            userLat = pos.coords.latitude;
+                            userLon = pos.coords.longitude;
+                            document.getElementById("geo-status").innerHTML =
+                                "✅ Ubicación obtenida";
+                            document.getElementById("geo-status").style.color = "green";
+                            document.getElementById("btn").disabled = false;
+                            document.getElementById("btn").textContent = "Registrar asistencia";
+                        }},
+                        function(err) {{
+                            document.getElementById("geo-status").innerHTML =
+                                "❌ Debés permitir el acceso a tu ubicación para registrar asistencia.";
+                            document.getElementById("geo-status").style.color = "red";
+                        }},
+                        {{ enableHighAccuracy: true, timeout: 15000 }}
+                    );
+                }}
 
                 async function registrar() {{
                     const email = document.getElementById("email").value;
                     const codigo = document.getElementById("codigo").value;
                     const resultado = document.getElementById("resultado");
+
+                    if (!userLat || !userLon) {{
+                        resultado.innerHTML = "❌ No se pudo obtener tu ubicación. Recargá la página y permitir acceso.";
+                        resultado.style.color = "red";
+                        return;
+                    }}
 
                     try {{
                         const response = await fetch("/attendance", {{
@@ -150,7 +211,7 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                             headers: {{
                                 "Content-Type": "application/json"
                             }},
-                            body: JSON.stringify({{ email, codigo, clase }})
+                            body: JSON.stringify({{ email, codigo, clase, lat: userLat, lon: userLon }})
                         }});
 
                         const data = await response.json();
@@ -172,6 +233,8 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                         resultado.style.color = "red";
                     }}
                 }}
+
+                initGeo();
             </script>
         </body>
     </html>
@@ -235,6 +298,8 @@ def guardar_asistencia_csv(registro):
                 "hora",
                 "ip",
                 "user_agent",
+                "lat",
+                "lon",
             ],
         )
 
@@ -252,6 +317,8 @@ def guardar_asistencia_csv(registro):
                 "hora": registro["hora"],
                 "ip": registro["ip"],
                 "user_agent": registro["user_agent"],
+                "lat": registro["lat"],
+                "lon": registro["lon"],
             }
         )
 
@@ -267,6 +334,16 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
     estudiante = next((s for s in students if s["email"] == email), None)
     if not estudiante:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+
+    if data.lat is None or data.lon is None:
+        raise HTTPException(status_code=400, detail="No se recibió la ubicación. Recargá la página y permitir acceso a la ubicación.")
+
+    distancia = haversine(data.lat, data.lon, FACULTAD_LAT, FACULTAD_LON)
+    if distancia > RADIO_MAX_METROS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tu ubicación está a {int(distancia)} metros de la facultad. Debés estar presente en el edificio para registrar asistencia."
+        )
 
     clase_actual = data.clase if data.clase else "sin_clase"
 
@@ -302,6 +379,8 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         "hora": ahora.strftime("%H:%M:%S"),
         "ip": ip_cliente,
         "user_agent": user_agent,
+        "lat": data.lat,
+        "lon": data.lon,
     }
 
     attendance.append(registro)
