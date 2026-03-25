@@ -472,3 +472,238 @@ def reset_attendance():
 def reset_students():
     students.clear()
     return {"mensaje": "Lista de estudiantes reiniciada"}
+
+
+@app.get("/panel", response_class=HTMLResponse)
+def panel_docente():
+    return """
+    <html>
+        <head>
+            <title>Panel Docente - Taller V</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body {
+                    font-family: Arial, sans-serif;
+                    background: #f0f0f0;
+                    padding: 24px;
+                }
+                h1 {
+                    font-size: 22px;
+                    margin-bottom: 20px;
+                    color: #111;
+                }
+                .grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 16px;
+                    margin-bottom: 20px;
+                }
+                @media (max-width: 700px) {
+                    .grid { grid-template-columns: 1fr; }
+                }
+                .card {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 20px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                }
+                .card h2 {
+                    font-size: 14px;
+                    color: #888;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    margin-bottom: 12px;
+                }
+                .codigo {
+                    font-size: 36px;
+                    font-weight: bold;
+                    letter-spacing: 4px;
+                    color: #111;
+                    margin-bottom: 14px;
+                }
+                input[type=text] {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                    font-size: 15px;
+                    margin-bottom: 10px;
+                }
+                button {
+                    padding: 10px 18px;
+                    border: none;
+                    border-radius: 8px;
+                    background: black;
+                    color: white;
+                    font-size: 14px;
+                    cursor: pointer;
+                }
+                button:hover { opacity: 0.85; }
+                button.secondary {
+                    background: #eee;
+                    color: #333;
+                }
+                #qr-img {
+                    margin-top: 14px;
+                    max-width: 220px;
+                    display: none;
+                    border-radius: 8px;
+                }
+                .full-card {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 20px;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                }
+                .full-card h2 {
+                    font-size: 14px;
+                    color: #888;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    margin-bottom: 14px;
+                }
+                .contador {
+                    font-size: 28px;
+                    font-weight: bold;
+                    color: #111;
+                    margin-bottom: 14px;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 14px;
+                }
+                th {
+                    text-align: left;
+                    padding: 8px 10px;
+                    background: #f5f5f5;
+                    color: #555;
+                    font-weight: 600;
+                }
+                td {
+                    padding: 8px 10px;
+                    border-bottom: 1px solid #f0f0f0;
+                }
+                tr:last-child td { border-bottom: none; }
+                .badge {
+                    display: inline-block;
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                    padding: 2px 8px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                }
+                .refresh-note {
+                    font-size: 12px;
+                    color: #aaa;
+                    margin-top: 10px;
+                }
+                #status-msg {
+                    margin-top: 8px;
+                    font-size: 13px;
+                    color: green;
+                    min-height: 18px;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>Panel Docente — Taller V</h1>
+
+            <div class="grid">
+                <!-- Código actual -->
+                <div class="card">
+                    <h2>Código de clase</h2>
+                    <div class="codigo" id="codigo">...</div>
+                    <button onclick="nuevoCodigo()">Generar nuevo código</button>
+                    <div id="status-msg"></div>
+                </div>
+
+                <!-- QR -->
+                <div class="card">
+                    <h2>Código QR</h2>
+                    <input type="text" id="nombre-clase" placeholder="Nombre de la clase (ej: Clase 7 - 26 marzo)" />
+                    <button onclick="generarQR()">Generar QR</button>
+                    <br/>
+                    <img id="qr-img" src="" alt="QR" />
+                </div>
+            </div>
+
+            <!-- Asistencia del día -->
+            <div class="full-card">
+                <h2>Asistencia de hoy — <span id="fecha-hoy"></span></h2>
+                <div class="contador"><span id="total">0</span> presentes</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Nombre</th>
+                            <th>Apellido</th>
+                            <th>Hora</th>
+                            <th>Clase</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-asistencia">
+                        <tr><td colspan="5" style="color:#aaa">Cargando...</td></tr>
+                    </tbody>
+                </table>
+                <div class="refresh-note">Se actualiza automáticamente cada 30 segundos.</div>
+            </div>
+
+            <script>
+                const hoy = new Date().toISOString().split("T")[0];
+                document.getElementById("fecha-hoy").textContent = hoy;
+
+                async function cargarCodigo() {
+                    const res = await fetch("/");
+                    const data = await res.json();
+                    document.getElementById("codigo").textContent = data.codigo_actual;
+                }
+
+                async function nuevoCodigo() {
+                    const res = await fetch("/nuevo_codigo");
+                    const data = await res.json();
+                    document.getElementById("codigo").textContent = data.codigo_actual;
+                    const msg = document.getElementById("status-msg");
+                    msg.textContent = "✅ Nuevo código generado";
+                    setTimeout(() => msg.textContent = "", 3000);
+                }
+
+                function generarQR() {
+                    const clase = document.getElementById("nombre-clase").value.trim() || "sin_clase";
+                    const img = document.getElementById("qr-img");
+                    img.src = "/qr?clase=" + encodeURIComponent(clase) + "&t=" + Date.now();
+                    img.style.display = "block";
+                }
+
+                async function cargarAsistencia() {
+                    const res = await fetch("/attendance");
+                    const data = await res.json();
+                    const registros = data.attendance.filter(r => r.fecha === hoy);
+                    registros.sort((a, b) => a.hora.localeCompare(b.hora));
+
+                    document.getElementById("total").textContent = registros.length;
+
+                    const tbody = document.getElementById("tabla-asistencia");
+                    if (registros.length === 0) {
+                        tbody.innerHTML = "<tr><td colspan='5' style='color:#aaa'>Sin registros por ahora.</td></tr>";
+                        return;
+                    }
+                    tbody.innerHTML = registros.map((r, i) => `
+                        <tr>
+                            <td>${i + 1}</td>
+                            <td>${r.nombre}</td>
+                            <td>${r.apellido}</td>
+                            <td><span class="badge">${r.hora}</span></td>
+                            <td>${r.clase}</td>
+                        </tr>
+                    `).join("");
+                }
+
+                cargarCodigo();
+                cargarAsistencia();
+                setInterval(cargarAsistencia, 30000);
+            </script>
+        </body>
+    </html>
+    """
