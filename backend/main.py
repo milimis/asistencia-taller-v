@@ -679,10 +679,12 @@ def panel_docente():
                             <th>Apellido</th>
                             <th>Hora</th>
                             <th>Clase</th>
+                            <th>IP</th>
+                            <th>Dispositivo</th>
                         </tr>
                     </thead>
                     <tbody id="tabla-asistencia">
-                        <tr><td colspan="5" style="color:#aaa">Cargando...</td></tr>
+                        <tr><td colspan="7" style="color:#aaa">Cargando...</td></tr>
                     </tbody>
                 </table>
                 <div class="refresh-note">Se actualiza automáticamente cada 30 segundos (solo para la fecha seleccionada).</div>
@@ -730,7 +732,7 @@ def panel_docente():
 
                     const tbody = document.getElementById("tabla-asistencia");
                     if (registros.length === 0) {
-                        tbody.innerHTML = "<tr><td colspan='5' style='color:#aaa'>Sin registros para esta fecha.</td></tr>";
+                        tbody.innerHTML = "<tr><td colspan='7' style='color:#aaa'>Sin registros para esta fecha.</td></tr>";
                         return;
                     }
                     tbody.innerHTML = registros.map((r, i) => `
@@ -740,8 +742,23 @@ def panel_docente():
                             <td>${r.apellido}</td>
                             <td><span class="badge">${r.hora}</span></td>
                             <td>${r.clase}</td>
+                            <td style="font-size:12px;color:#666;">${r.ip || '-'}</td>
+                            <td style="font-size:11px;color:#888;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.user_agent || ''}">${parsearDispositivo(r.user_agent)}</td>
                         </tr>
                     `).join("");
+                }
+
+                function parsearDispositivo(ua) {
+                    if (!ua) return '-';
+                    if (ua.includes('iPhone')) return '📱 iPhone';
+                    if (ua.includes('Android')) {
+                        if (ua.includes('SamsungBrowser')) return '📱 Samsung';
+                        return '📱 Android';
+                    }
+                    if (ua.includes('iPad')) return '📱 iPad';
+                    if (ua.includes('Macintosh') || ua.includes('Mac OS X') && !ua.includes('iPhone') && !ua.includes('iPad')) return '💻 Mac';
+                    if (ua.includes('Windows')) return '💻 Windows';
+                    return '🌐 Otro';
                 }
 
                 cargarCodigo();
