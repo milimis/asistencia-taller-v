@@ -662,8 +662,10 @@ def bitacora_detalle(file_id: str = Query(...)):
         slides_con_imagen = 0
         clases_detectadas = set()
 
-        # Tipos de placeholder que son solo título/encabezado → no cuentan como contenido
+        # Tipos de placeholder que son título/encabezado → ignorar siempre
         TITULOS = {"TITLE", "CENTERED_TITLE", "SUBTITLE"}
+        # Placeholders de cuerpo (parte de la plantilla) → umbral alto
+        CUERPO = {"BODY", "OBJECT", "PICTURE", "SLIDE_NUMBER", "FOOTER", "DATE_AND_TIME"}
 
         for slide in slides:
             tiene_contenido = False
@@ -672,15 +674,26 @@ def bitacora_detalle(file_id: str = Query(...)):
 
             for elem in slide.get("pageElements", []):
                 shape = elem.get("shape", {})
-                placeholder_type = shape.get("placeholder", {}).get("type", "")
+                placeholder = shape.get("placeholder", {})
+                placeholder_type = placeholder.get("type", "")
+
                 es_titulo = placeholder_type in TITULOS
+                es_cuerpo_plantilla = placeholder_type in CUERPO
+                es_caja_libre = not placeholder  # texto box agregado manualmente
+
+                if es_titulo:
+                    continue  # ignorar siempre los títulos
 
                 texto_elem = ""
                 for te in shape.get("text", {}).get("textElements", []):
                     texto_elem += te.get("textRun", {}).get("content", "")
+                texto_elem = texto_elem.strip()
 
-                # Contar como contenido real: no es título Y tiene más de 20 chars
-                if not es_titulo and len(texto_elem.strip()) > 20:
+                # Caja libre del estudiante: umbral bajo (> 10 chars)
+                # Placeholder de cuerpo de plantilla: umbral alto (> 80 chars)
+                umbral = 10 if es_caja_libre else 80
+
+                if len(texto_elem) > umbral:
                     tiene_contenido = True
                     texto_slide += texto_elem + " "
 
