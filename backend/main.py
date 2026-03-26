@@ -9,6 +9,7 @@ import string
 import math
 import pytz
 import json
+import re
 import qrcode
 from fastapi.responses import HTMLResponse, FileResponse
 from google.oauth2 import service_account
@@ -552,56 +553,49 @@ def ver_bitacoras():
         files = results.get("files", [])
         ahora = datetime.now(pytz.UTC)
 
-        # Primera pasada: recolectar emails para detectar duplicados
-        email_count = {}
-        file_emails = []
+        # Resolver archivos (una sola pasada, maneja accesos directos)
+        resolved = []
         for f in files:
-            owner_email = ""
+            item = {
+                "name": f.get("name", ""),
+                "file_id": f.get("id", ""),
+                "modified_str": f.get("modifiedTime", ""),
+                "link": f.get("webViewLink", ""),
+                "owner_email": "",
+            }
             if f.get("mimeType") == "application/vnd.google-apps.shortcut":
                 target_id = (f.get("shortcutDetails") or {}).get("targetId")
                 if target_id:
                     try:
                         real = service.files().get(
                             fileId=target_id,
-                            fields="modifiedTime, webViewLink, owners"
+                            fields="id, modifiedTime, webViewLink, owners"
                         ).execute()
+                        item["file_id"] = real.get("id", target_id)
+                        item["modified_str"] = real.get("modifiedTime", item["modified_str"])
+                        item["link"] = real.get("webViewLink", item["link"])
                         owners = real.get("owners", [])
                         if owners:
-                            owner_email = owners[0].get("emailAddress", "").lower()
+                            item["owner_email"] = owners[0].get("emailAddress", "").lower()
                     except Exception:
                         pass
             else:
                 owners = f.get("owners", [])
                 if owners:
-                    owner_email = owners[0].get("emailAddress", "").lower()
-            file_emails.append(owner_email)
-            if owner_email:
-                email_count[owner_email] = email_count.get(owner_email, 0) + 1
+                    item["owner_email"] = owners[0].get("emailAddress", "").lower()
+            resolved.append(item)
 
-        # Segunda pasada: construir lista con nombre, fecha, duplicado
+        # Detectar duplicados por email
+        email_count = {}
+        for item in resolved:
+            e = item["owner_email"]
+            if e:
+                email_count[e] = email_count.get(e, 0) + 1
+
+        # Construir lista final
         bitacoras = []
-        for i, f in enumerate(files):
-            owner_email = file_emails[i]
-            link = f.get("webViewLink", "")
-            modified_str = f.get("modifiedTime", "")
-
-            # Si es acceso directo, usar datos del archivo real
-            if f.get("mimeType") == "application/vnd.google-apps.shortcut":
-                target_id = (f.get("shortcutDetails") or {}).get("targetId")
-                if target_id:
-                    try:
-                        real = service.files().get(
-                            fileId=target_id,
-                            fields="modifiedTime, webViewLink"
-                        ).execute()
-                        modified_str = real.get("modifiedTime", modified_str)
-                        link = real.get("webViewLink", link)
-                    except Exception:
-                        pass
-
-            # Nombre: desde lista de estudiantes si hay match, sino nombre del archivo
-            nombre_mostrar = estudiantes_por_email.get(owner_email) or f.get("name", "")
-
+        for item in resolved:
+            modified_str = item["modified_str"]
             if modified_str:
                 modified = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
                 dias = (ahora - modified).days
@@ -617,26 +611,97 @@ def ver_bitacoras():
                 fecha_formateada = "Sin datos"
                 semaforo = "🔴"
 
+            owner_email = item["owner_email"]
+            nombre_mostrar = estudiantes_por_email.get(owner_email) or item["name"]
             duplicada = email_count.get(owner_email, 0) > 1
 
             bitacoras.append({
                 "nombre": nombre_mostrar,
-                "nombre_archivo": f.get("name", ""),
+                "nombre_archivo": item["name"],
+                "file_id": item["file_id"],
                 "ultima_modificacion": fecha_formateada,
                 "dias_sin_actividad": dias,
                 "semaforo": semaforo,
-                "link": link,
+                "link": item["link"],
                 "duplicada": duplicada,
                 "email": owner_email,
             })
 
-        # Ordenar: más inactivos primero
         bitacoras.sort(key=lambda x: x["dias_sin_actividad"], reverse=True)
-
         return {"total": len(bitacoras), "bitacoras": bitacoras}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al conectar con Google Drive: {str(e)}")
+
+
+@app.get("/bitacora_detalle")
+def bitacora_detalle(file_id: str = Query(...)):
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not creds_json:
+        raise HTTPException(status_code=500, detail="Credenciales no configuradas")
+
+    try:
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=[
+                "https://www.googleapis.com/auth/drive.readonly",
+                "https://www.googleapis.com/auth/presentations.readonly",
+            ]
+        )
+        slides_service = build("slides", "v1", credentials=credentials)
+
+        presentation = slides_service.presentations().get(
+            presentationId=file_id,
+            fields="slides(pageElements(shape/text/textElements/textRun/content,image))"
+        ).execute()
+
+        slides = presentation.get("slides", [])
+        total_slides = len(slides)
+        slides_con_texto = 0
+        slides_con_imagen = 0
+        clases_detectadas = set()
+
+        for slide in slides:
+            tiene_texto = False
+            tiene_imagen = False
+            texto_slide = ""
+
+            for elem in slide.get("pageElements", []):
+                shape = elem.get("shape", {})
+                for te in shape.get("text", {}).get("textElements", []):
+                    content = te.get("textRun", {}).get("content", "").strip()
+                    if content:
+                        tiene_texto = True
+                        texto_slide += content + " "
+                if "image" in elem:
+                    tiene_imagen = True
+
+            if tiene_texto:
+                slides_con_texto += 1
+            if tiene_imagen:
+                slides_con_imagen += 1
+
+            for m in re.findall(r'clase\s*\d+', texto_slide.lower()):
+                clases_detectadas.add(m)
+
+        if slides_con_texto >= 3:
+            semaforo = "🟢"
+        elif slides_con_texto >= 1:
+            semaforo = "🟡"
+        else:
+            semaforo = "🔴"
+
+        return {
+            "total_slides": total_slides,
+            "slides_con_texto": slides_con_texto,
+            "slides_con_imagen": slides_con_imagen,
+            "clases_detectadas": sorted(list(clases_detectadas)),
+            "semaforo": semaforo,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al analizar: {str(e)}")
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -834,10 +899,11 @@ def panel_docente():
                     <thead>
                         <tr>
                             <th>#</th>
-                            <th>Bitácora</th>
-                            <th>Última modificación</th>
-                            <th>Días sin actividad</th>
-                            <th>Estado</th>
+                            <th>Estudiante</th>
+                            <th>Últ. modificación</th>
+                            <th>Días</th>
+                            <th>Actividad</th>
+                            <th>Contenido</th>
                             <th>Abrir</th>
                         </tr>
                     </thead>
@@ -916,6 +982,33 @@ def panel_docente():
                     return '🌐 Otro';
                 }
 
+                async function analizarContenido(fileId, rowIdx) {
+                    const celda = document.getElementById("contenido-" + rowIdx);
+                    celda.innerHTML = '<span style="font-size:12px;color:#aaa;">⏳</span>';
+                    try {
+                        const res = await fetch("/bitacora_detalle?file_id=" + fileId);
+                        const d = await res.json();
+                        if (!res.ok) {
+                            celda.innerHTML = '<span style="font-size:11px;color:red;">Error</span>';
+                            return;
+                        }
+                        const clases = d.clases_detectadas.length > 0
+                            ? d.clases_detectadas.join(", ")
+                            : "—";
+                        celda.innerHTML = `
+                            <span style="font-size:18px;">${d.semaforo}</span>
+                            <span style="font-size:11px;color:#555;margin-left:4px;">
+                                ${d.total_slides} slides &nbsp;
+                                📝${d.slides_con_texto} &nbsp;
+                                🖼️${d.slides_con_imagen}
+                            </span>
+                            <br><span style="font-size:10px;color:#888;">${clases}</span>
+                        `;
+                    } catch(e) {
+                        celda.innerHTML = '<span style="font-size:11px;color:red;">Error</span>';
+                    }
+                }
+
                 async function cargarBitacoras() {
                     const btn = document.getElementById("btn-bitacoras");
                     const estado = document.getElementById("bitacoras-estado");
@@ -942,7 +1035,7 @@ def panel_docente():
                         tabla.style.display = "table";
 
                         tbody.innerHTML = data.bitacoras.map((b, i) => `
-                            <tr style="${b.duplicada ? 'background:#fff8e1;' : ''}">
+                            <tr style="${b.duplicada ? 'background:#fff8e1;' : ''}" id="row-${i}">
                                 <td>${i + 1}</td>
                                 <td>
                                     ${b.nombre}
@@ -951,6 +1044,9 @@ def panel_docente():
                                 <td style="font-size:13px;">${b.ultima_modificacion}</td>
                                 <td style="text-align:center;">${b.dias_sin_actividad === 999 ? '-' : b.dias_sin_actividad}</td>
                                 <td style="text-align:center;font-size:18px;">${b.semaforo}</td>
+                                <td id="contenido-${i}">
+                                    <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="analizarContenido('${b.file_id}', ${i})">🔍</button>
+                                </td>
                                 <td><a href="${b.link}" target="_blank" style="font-size:12px;color:#333;">Abrir →</a></td>
                             </tr>
                         `).join("");
