@@ -531,7 +531,7 @@ def ver_bitacoras():
 
         results = service.files().list(
             q=f"'{BITACORAS_FOLDER_ID}' in parents and trashed=false",
-            fields="files(id, name, modifiedTime, webViewLink)",
+            fields="files(id, name, modifiedTime, webViewLink, mimeType, shortcutDetails)",
             pageSize=100,
             orderBy="name"
         ).execute()
@@ -541,7 +541,24 @@ def ver_bitacoras():
 
         bitacoras = []
         for f in files:
+            nombre = f.get("name", "")
+            link = f.get("webViewLink", "")
             modified_str = f.get("modifiedTime", "")
+
+            # Si es un acceso directo, buscar el archivo real
+            if f.get("mimeType") == "application/vnd.google-apps.shortcut":
+                target_id = (f.get("shortcutDetails") or {}).get("targetId")
+                if target_id:
+                    try:
+                        real = service.files().get(
+                            fileId=target_id,
+                            fields="modifiedTime, webViewLink"
+                        ).execute()
+                        modified_str = real.get("modifiedTime", modified_str)
+                        link = real.get("webViewLink", link)
+                    except Exception:
+                        pass
+
             if modified_str:
                 modified = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
                 dias = (ahora - modified).days
@@ -558,11 +575,11 @@ def ver_bitacoras():
                 semaforo = "🔴"
 
             bitacoras.append({
-                "nombre": f.get("name", ""),
+                "nombre": nombre,
                 "ultima_modificacion": fecha_formateada,
                 "dias_sin_actividad": dias,
                 "semaforo": semaforo,
-                "link": f.get("webViewLink", "")
+                "link": link
             })
 
         # Ordenar: más inactivos primero
