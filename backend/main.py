@@ -653,48 +653,58 @@ def bitacora_detalle(file_id: str = Query(...)):
 
         presentation = slides_service.presentations().get(
             presentationId=file_id,
-            fields="slides(pageElements(shape/text/textElements/textRun/content,image))"
+            fields="slides(pageElements(shape(text/textElements/textRun/content,placeholder/type),image))"
         ).execute()
 
         slides = presentation.get("slides", [])
         total_slides = len(slides)
-        slides_con_texto = 0
+        slides_con_contenido = 0
         slides_con_imagen = 0
         clases_detectadas = set()
 
+        # Tipos de placeholder que son solo título/encabezado → no cuentan como contenido
+        TITULOS = {"TITLE", "CENTERED_TITLE", "SUBTITLE"}
+
         for slide in slides:
-            tiene_texto = False
+            tiene_contenido = False
             tiene_imagen = False
             texto_slide = ""
 
             for elem in slide.get("pageElements", []):
                 shape = elem.get("shape", {})
+                placeholder_type = shape.get("placeholder", {}).get("type", "")
+                es_titulo = placeholder_type in TITULOS
+
+                texto_elem = ""
                 for te in shape.get("text", {}).get("textElements", []):
-                    content = te.get("textRun", {}).get("content", "").strip()
-                    if content:
-                        tiene_texto = True
-                        texto_slide += content + " "
+                    texto_elem += te.get("textRun", {}).get("content", "")
+
+                # Contar como contenido real: no es título Y tiene más de 20 chars
+                if not es_titulo and len(texto_elem.strip()) > 20:
+                    tiene_contenido = True
+                    texto_slide += texto_elem + " "
+
                 if "image" in elem:
                     tiene_imagen = True
 
-            if tiene_texto:
-                slides_con_texto += 1
+            if tiene_contenido:
+                slides_con_contenido += 1
             if tiene_imagen:
                 slides_con_imagen += 1
 
             for m in re.findall(r'clase\s*\d+', texto_slide.lower()):
                 clases_detectadas.add(m)
 
-        if slides_con_texto >= 3:
+        if slides_con_contenido >= 3 or slides_con_imagen >= 3:
             semaforo = "🟢"
-        elif slides_con_texto >= 1:
+        elif slides_con_contenido >= 1 or slides_con_imagen >= 1:
             semaforo = "🟡"
         else:
             semaforo = "🔴"
 
         return {
             "total_slides": total_slides,
-            "slides_con_texto": slides_con_texto,
+            "slides_con_contenido": slides_con_contenido,
             "slides_con_imagen": slides_con_imagen,
             "clases_detectadas": sorted(list(clases_detectadas)),
             "semaforo": semaforo,
@@ -999,7 +1009,7 @@ def panel_docente():
                             <span style="font-size:18px;">${d.semaforo}</span>
                             <span style="font-size:11px;color:#555;margin-left:4px;">
                                 ${d.total_slides} slides &nbsp;
-                                📝${d.slides_con_texto} &nbsp;
+                                📝${d.slides_con_contenido} &nbsp;
                                 🖼️${d.slides_con_imagen}
                             </span>
                             <br><span style="font-size:10px;color:#888;">${clases}</span>
