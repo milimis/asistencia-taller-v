@@ -8,8 +8,11 @@ import random
 import string
 import math
 import pytz
+import json
 import qrcode
 from fastapi.responses import HTMLResponse, FileResponse
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 TZ_UY = pytz.timezone("America/Montevideo")
 
@@ -23,6 +26,8 @@ attendance = []
 FACULTAD_LAT = -34.910281089334184
 FACULTAD_LON = -56.16376847335219
 RADIO_MAX_METROS = 150
+
+BITACORAS_FOLDER_ID = "18IOsdJGepbeHJQ-9jOV7ks3Hk3t5q0wB"
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -510,6 +515,65 @@ def reset_students():
     return {"mensaje": "Lista de estudiantes reiniciada"}
 
 
+@app.get("/bitacoras")
+def ver_bitacoras():
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not creds_json:
+        raise HTTPException(status_code=500, detail="Credenciales de Google no configuradas")
+
+    try:
+        creds_dict = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/drive.readonly"]
+        )
+        service = build("drive", "v3", credentials=credentials)
+
+        results = service.files().list(
+            q=f"'{BITACORAS_FOLDER_ID}' in parents and trashed=false",
+            fields="files(id, name, modifiedTime, webViewLink)",
+            pageSize=100,
+            orderBy="name"
+        ).execute()
+
+        files = results.get("files", [])
+        ahora = datetime.now(pytz.UTC)
+
+        bitacoras = []
+        for f in files:
+            modified_str = f.get("modifiedTime", "")
+            if modified_str:
+                modified = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
+                dias = (ahora - modified).days
+                fecha_formateada = modified.astimezone(TZ_UY).strftime("%d/%m %H:%M")
+                if dias <= 7:
+                    semaforo = "🟢"
+                elif dias <= 14:
+                    semaforo = "🟡"
+                else:
+                    semaforo = "🔴"
+            else:
+                dias = 999
+                fecha_formateada = "Sin datos"
+                semaforo = "🔴"
+
+            bitacoras.append({
+                "nombre": f.get("name", ""),
+                "ultima_modificacion": fecha_formateada,
+                "dias_sin_actividad": dias,
+                "semaforo": semaforo,
+                "link": f.get("webViewLink", "")
+            })
+
+        # Ordenar: más inactivos primero
+        bitacoras.sort(key=lambda x: x["dias_sin_actividad"], reverse=True)
+
+        return {"total": len(bitacoras), "bitacoras": bitacoras}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con Google Drive: {str(e)}")
+
+
 @app.get("/panel", response_class=HTMLResponse)
 def panel_docente():
     return """
@@ -693,6 +757,29 @@ def panel_docente():
                 <div class="refresh-note">Se actualiza automáticamente cada 30 segundos (solo para la fecha seleccionada).</div>
             </div>
 
+            <!-- Bitácoras -->
+            <div class="full-card" style="margin-top:20px;">
+                <h2>Bitácoras</h2>
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
+                    <button onclick="cargarBitacoras()" id="btn-bitacoras">Ver bitácoras</button>
+                    <span style="font-size:12px;color:#aaa;">🟢 última semana &nbsp; 🟡 última quincena &nbsp; 🔴 más de 14 días</span>
+                </div>
+                <div id="bitacoras-estado" style="font-size:13px;color:#888;min-height:20px;"></div>
+                <table id="tabla-bitacoras" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Bitácora</th>
+                            <th>Última modificación</th>
+                            <th>Días sin actividad</th>
+                            <th>Estado</th>
+                            <th>Abrir</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-bitacoras"></tbody>
+                </table>
+            </div>
+
             <script>
                 const hoy = new Date().toISOString().split("T")[0];
                 document.getElementById("filtro-fecha").value = hoy;
@@ -762,6 +849,50 @@ def panel_docente():
                     if (ua.includes('Macintosh') || ua.includes('Mac OS X') && !ua.includes('iPhone') && !ua.includes('iPad')) return '💻 Mac';
                     if (ua.includes('Windows')) return '💻 Windows';
                     return '🌐 Otro';
+                }
+
+                async function cargarBitacoras() {
+                    const btn = document.getElementById("btn-bitacoras");
+                    const estado = document.getElementById("bitacoras-estado");
+                    const tabla = document.getElementById("tabla-bitacoras");
+                    const tbody = document.getElementById("tbody-bitacoras");
+
+                    btn.disabled = true;
+                    btn.textContent = "Cargando...";
+                    estado.textContent = "⏳ Consultando Google Drive...";
+                    tabla.style.display = "none";
+
+                    try {
+                        const res = await fetch("/bitacoras");
+                        const data = await res.json();
+
+                        if (!res.ok) {
+                            estado.textContent = "❌ " + data.detail;
+                            btn.disabled = false;
+                            btn.textContent = "Ver bitácoras";
+                            return;
+                        }
+
+                        estado.textContent = `${data.total} bitácoras encontradas`;
+                        tabla.style.display = "table";
+
+                        tbody.innerHTML = data.bitacoras.map((b, i) => `
+                            <tr>
+                                <td>${i + 1}</td>
+                                <td>${b.nombre}</td>
+                                <td style="font-size:13px;">${b.ultima_modificacion}</td>
+                                <td style="text-align:center;">${b.dias_sin_actividad === 999 ? '-' : b.dias_sin_actividad}</td>
+                                <td style="text-align:center;font-size:18px;">${b.semaforo}</td>
+                                <td><a href="${b.link}" target="_blank" style="font-size:12px;color:#333;">Abrir →</a></td>
+                            </tr>
+                        `).join("");
+
+                    } catch (e) {
+                        estado.textContent = "❌ Error de conexión";
+                    }
+
+                    btn.disabled = false;
+                    btn.textContent = "Actualizar";
                 }
 
                 cargarCodigo();

@@ -4,3 +4,5 @@ pydantic
 python-multipart
 qrcode[pil]
 pytz
+google-api-python-client
+google-auth
