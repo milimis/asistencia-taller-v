@@ -522,6 +522,19 @@ def ver_bitacoras():
         raise HTTPException(status_code=500, detail="Credenciales de Google no configuradas")
 
     try:
+        # Cargar lista de estudiantes para hacer match por email
+        estudiantes_por_email = {}
+        archivo_lista = "data/lista_prueba.csv"
+        if os.path.isfile(archivo_lista):
+            with open(archivo_lista, newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                for row in reader:
+                    email = row.get("email", "").strip().lower()
+                    nombre = row.get("nombre", "").strip().title()
+                    apellido = row.get("apellido", "").strip().title()
+                    if email:
+                        estudiantes_por_email[email] = f"{apellido}, {nombre}"
+
         creds_dict = json.loads(creds_json)
         credentials = service_account.Credentials.from_service_account_info(
             creds_dict,
@@ -531,7 +544,7 @@ def ver_bitacoras():
 
         results = service.files().list(
             q=f"'{BITACORAS_FOLDER_ID}' in parents and trashed=false",
-            fields="files(id, name, modifiedTime, webViewLink, mimeType, shortcutDetails)",
+            fields="files(id, name, modifiedTime, webViewLink, mimeType, shortcutDetails, owners)",
             pageSize=100,
             orderBy="name"
         ).execute()
@@ -539,13 +552,40 @@ def ver_bitacoras():
         files = results.get("files", [])
         ahora = datetime.now(pytz.UTC)
 
-        bitacoras = []
+        # Primera pasada: recolectar emails para detectar duplicados
+        email_count = {}
+        file_emails = []
         for f in files:
-            nombre = f.get("name", "")
+            owner_email = ""
+            if f.get("mimeType") == "application/vnd.google-apps.shortcut":
+                target_id = (f.get("shortcutDetails") or {}).get("targetId")
+                if target_id:
+                    try:
+                        real = service.files().get(
+                            fileId=target_id,
+                            fields="modifiedTime, webViewLink, owners"
+                        ).execute()
+                        owners = real.get("owners", [])
+                        if owners:
+                            owner_email = owners[0].get("emailAddress", "").lower()
+                    except Exception:
+                        pass
+            else:
+                owners = f.get("owners", [])
+                if owners:
+                    owner_email = owners[0].get("emailAddress", "").lower()
+            file_emails.append(owner_email)
+            if owner_email:
+                email_count[owner_email] = email_count.get(owner_email, 0) + 1
+
+        # Segunda pasada: construir lista con nombre, fecha, duplicado
+        bitacoras = []
+        for i, f in enumerate(files):
+            owner_email = file_emails[i]
             link = f.get("webViewLink", "")
             modified_str = f.get("modifiedTime", "")
 
-            # Si es un acceso directo, buscar el archivo real
+            # Si es acceso directo, usar datos del archivo real
             if f.get("mimeType") == "application/vnd.google-apps.shortcut":
                 target_id = (f.get("shortcutDetails") or {}).get("targetId")
                 if target_id:
@@ -558,6 +598,9 @@ def ver_bitacoras():
                         link = real.get("webViewLink", link)
                     except Exception:
                         pass
+
+            # Nombre: desde lista de estudiantes si hay match, sino nombre del archivo
+            nombre_mostrar = estudiantes_por_email.get(owner_email) or f.get("name", "")
 
             if modified_str:
                 modified = datetime.fromisoformat(modified_str.replace("Z", "+00:00"))
@@ -574,12 +617,17 @@ def ver_bitacoras():
                 fecha_formateada = "Sin datos"
                 semaforo = "🔴"
 
+            duplicada = email_count.get(owner_email, 0) > 1
+
             bitacoras.append({
-                "nombre": nombre,
+                "nombre": nombre_mostrar,
+                "nombre_archivo": f.get("name", ""),
                 "ultima_modificacion": fecha_formateada,
                 "dias_sin_actividad": dias,
                 "semaforo": semaforo,
-                "link": link
+                "link": link,
+                "duplicada": duplicada,
+                "email": owner_email,
             })
 
         # Ordenar: más inactivos primero
@@ -894,9 +942,12 @@ def panel_docente():
                         tabla.style.display = "table";
 
                         tbody.innerHTML = data.bitacoras.map((b, i) => `
-                            <tr>
+                            <tr style="${b.duplicada ? 'background:#fff8e1;' : ''}">
                                 <td>${i + 1}</td>
-                                <td>${b.nombre}</td>
+                                <td>
+                                    ${b.nombre}
+                                    ${b.duplicada ? '<span style="background:#ff9800;color:white;font-size:10px;padding:2px 6px;border-radius:8px;margin-left:6px;">⚠️ DUPLICADA</span>' : ''}
+                                </td>
                                 <td style="font-size:13px;">${b.ultima_modificacion}</td>
                                 <td style="text-align:center;">${b.dias_sin_actividad === 999 ? '-' : b.dias_sin_actividad}</td>
                                 <td style="text-align:center;font-size:18px;">${b.semaforo}</td>
