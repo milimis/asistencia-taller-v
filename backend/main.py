@@ -11,7 +11,8 @@ import pytz
 import json
 import re
 import qrcode
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+import io
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -504,6 +505,35 @@ def generar_qr(clase: str = "sin_clase"):
     return FileResponse(ruta, media_type="image/png", filename="qr_clase.png")
 
 
+@app.get("/descargar_asistencia")
+def descargar_asistencia(fecha: str = Query(default=None)):
+    """
+    Descarga la asistencia como CSV.
+    Si se pasa ?fecha=2026-03-26 filtra ese día.
+    Sin parámetro devuelve todo el historial.
+    """
+    campos = ["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]
+
+    if fecha:
+        registros = [r for r in attendance if r.get("fecha") == fecha]
+        nombre_archivo = f"asistencia_{fecha}.csv"
+    else:
+        registros = attendance
+        nombre_archivo = "asistencia_completa.csv"
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=campos, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(registros)
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
+    )
+
+
 @app.post("/reset_attendance")
 def reset_attendance():
     attendance.clear()
@@ -889,6 +919,8 @@ def panel_docente():
                     <input type="date" id="filtro-fecha" style="padding:8px 10px; border:1px solid #ddd; border-radius:8px; font-size:14px;" />
                     <button class="secondary" onclick="cargarAsistencia()">Ver</button>
                     <span style="font-size:13px; color:#888;">Hoy: <a href="#" onclick="irAHoy()" style="color:#333;">volver a hoy</a></span>
+                    <button class="secondary" onclick="descargarDia()" title="Descargar CSV del día seleccionado">⬇️ Día</button>
+                    <button class="secondary" onclick="descargarTodo()" title="Descargar historial completo">⬇️ Todo</button>
                 </div>
                 <div class="contador"><span id="total">0</span> presentes</div>
                 <table>
@@ -1085,6 +1117,15 @@ def panel_docente():
                 cargarCodigo();
                 cargarAsistencia();
                 setInterval(cargarAsistencia, 30000);
+
+                function descargarDia() {
+                    const fecha = document.getElementById("filtro-fecha").value || hoy;
+                    window.location.href = "/descargar_asistencia?fecha=" + fecha;
+                }
+
+                function descargarTodo() {
+                    window.location.href = "/descargar_asistencia";
+                }
             </script>
         </body>
     </html>
