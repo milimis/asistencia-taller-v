@@ -125,16 +125,31 @@ def normalizar(s):
 # ── Google Sheets ─────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_sheet():
+    creds_dict = None
+
+    # 1. Variable de entorno (desarrollo / Render)
     creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not creds_json:
-        # Fallback: archivo local para desarrollo
+    if creds_json:
+        creds_dict = json.loads(creds_json)
+
+    # 2. st.secrets como tabla TOML [gcp_service_account]
+    if creds_dict is None and "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+
+    # 3. st.secrets como string JSON
+    if creds_dict is None and "GOOGLE_SERVICE_ACCOUNT_JSON" in st.secrets:
+        creds_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+
+    # 4. Archivo local para desarrollo
+    if creds_dict is None:
         local_creds = Path(__file__).parent / "credentials_local.json"
         if local_creds.exists():
-            creds_json = local_creds.read_text()
-        else:
-            st.error("❌ Variable GOOGLE_SERVICE_ACCOUNT_JSON no encontrada.")
-            st.stop()
-    creds_dict  = json.loads(creds_json)
+            creds_dict = json.loads(local_creds.read_text())
+
+    if creds_dict is None:
+        st.error("❌ Credenciales de Google no encontradas. Configurá los Secrets en Streamlit Cloud.")
+        st.stop()
+
     credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client      = gspread.authorize(credentials)
     spreadsheet = client.open_by_key(SHEET_ID)
