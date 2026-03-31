@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+panel_docente/credentials_local.json
+panel_docente/data/notas.json
+panel_docente/.streamlit/secrets.toml

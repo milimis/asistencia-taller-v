@@ -14,6 +14,39 @@ st.set_page_config(
     layout="wide"
 )
 
+# ── Login ──────────────────────────────────────────────────────────────────────
+def check_login():
+    if st.session_state.get("logged_in"):
+        return True
+
+    st.markdown("""
+        <div style='max-width:380px;margin:80px auto 0;'>
+        <h2 style='text-align:center;margin-bottom:4px'>🎓 Taller V</h2>
+        <p style='text-align:center;color:#888;margin-bottom:32px'>Panel docente · FADU 2026</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        col_l, col_c, col_r = st.columns([1, 2, 1])
+        with col_c:
+            usuario = st.text_input("Usuario")
+            password = st.text_input("Contraseña", type="password")
+            ok = st.form_submit_button("Ingresar", use_container_width=True, type="primary")
+
+    if ok:
+        usuarios = dict(st.secrets.get("users", {}))
+        if usuario in usuarios and usuarios[usuario] == password:
+            st.session_state.logged_in = True
+            st.session_state.usuario = usuario
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos.")
+
+    return False
+
+if not check_login():
+    st.stop()
+
 # ── Constantes ────────────────────────────────────────────────────────────────
 SHEET_ID     = "1MtXr_FekHJIZiE-Cjxc3PwalNbZtqvP8O3GBJCMWDi4"
 SHEET_NAME   = "Notas"
@@ -94,8 +127,13 @@ def normalizar(s):
 def get_sheet():
     creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not creds_json:
-        st.error("❌ Variable GOOGLE_SERVICE_ACCOUNT_JSON no encontrada.")
-        st.stop()
+        # Fallback: archivo local para desarrollo
+        local_creds = Path(__file__).parent / "credentials_local.json"
+        if local_creds.exists():
+            creds_json = local_creds.read_text()
+        else:
+            st.error("❌ Variable GOOGLE_SERVICE_ACCOUNT_JSON no encontrada.")
+            st.stop()
     creds_dict  = json.loads(creds_json)
     credentials = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     client      = gspread.authorize(credentials)
@@ -109,8 +147,8 @@ def get_sheet():
 def init_sheet_if_empty(sheet, estudiantes):
     """Inicializa el sheet con headers y estudiantes si está vacío."""
     data = sheet.get_all_values()
-    if data:
-        return  # Ya inicializado
+    if data and any(cell for row in data for cell in row):
+        return  # Ya inicializado con contenido real
     rows = [HEADERS]
     for est in estudiantes:
         rows.append([
@@ -168,13 +206,7 @@ def load_students():
 # ── Asistencia desde API ──────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_asistencia():
-    try:
-        r = requests.get(f"{API_URL}/asistencia", timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    # Fallback: leer CSV local si existe
+    # Primero intentar CSV local
     csv_path = Path(__file__).parent.parent / "backend/data/asistencia.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path)
@@ -187,6 +219,23 @@ def load_asistencia():
                 "clases": len(group["fecha"].unique())
             }
         return resultado
+    # Fallback: API remota
+    try:
+        r = requests.get(f"{API_URL}/attendance", timeout=10)
+        if r.status_code == 200:
+            data = r.json().get("attendance", [])
+            resultado = {}
+            for reg in data:
+                apellido = str(reg.get("apellido", "")).strip()
+                nombre   = str(reg.get("nombre", "")).strip()
+                fecha    = reg.get("fecha", "")
+                key      = normalizar(apellido.split()[0])
+                if key not in resultado:
+                    resultado[key] = {"apellido": apellido, "nombre": nombre, "fechas": set()}
+                resultado[key]["fechas"].add(fecha)
+            return {k: {**v, "clases": len(v["fechas"])} for k, v in resultado.items()}
+    except Exception:
+        pass
     return {}
 
 def buscar_asistencia(est, asist):
@@ -219,6 +268,11 @@ vista = st.sidebar.radio(
 st.sidebar.divider()
 st.sidebar.caption(f"👥 {len(estudiantes)} estudiantes · 23 equipos")
 st.sidebar.caption(f"📅 {TOTAL_CLASES} clases · mín. 85%")
+st.sidebar.divider()
+st.sidebar.caption(f"👤 {st.session_state.get('usuario', '')}")
+if st.sidebar.button("Cerrar sesión"):
+    st.session_state.logged_in = False
+    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA 1 — RESUMEN GENERAL
