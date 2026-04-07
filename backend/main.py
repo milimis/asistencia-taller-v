@@ -563,6 +563,56 @@ def reset_attendance():
     return {"mensaje": "Asistencia reiniciada"}
 
 
+@app.post("/migrar_csv_a_sheets")
+def migrar_csv_a_sheets():
+    """Migración única: sube el CSV histórico a Google Sheets."""
+    archivo = "data/asistencia.csv"
+    if not os.path.isfile(archivo):
+        raise HTTPException(status_code=404, detail="No se encontró data/asistencia.csv")
+
+    filas = []
+    with open(archivo, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            filas.append([
+                row.get("fecha", ""),
+                row.get("clase", ""),
+                row.get("nombre", ""),
+                row.get("apellido", ""),
+                row.get("email", "").strip().lower(),
+                row.get("codigo", ""),
+                row.get("hora", ""),
+                row.get("ip", ""),
+                row.get("user_agent", ""),
+                row.get("lat", ""),
+                row.get("lon", ""),
+            ])
+
+    if not filas:
+        return {"mensaje": "CSV vacío, nada para migrar"}
+
+    service = get_sheets_service()
+
+    # Escribir encabezado
+    headers = [["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]]
+    service.spreadsheets().values().update(
+        spreadsheetId=ASISTENCIA_SHEET_ID,
+        range=f"{ASISTENCIA_SHEET_NAME}!A1",
+        valueInputOption="RAW",
+        body={"values": headers}
+    ).execute()
+
+    # Escribir datos
+    service.spreadsheets().values().update(
+        spreadsheetId=ASISTENCIA_SHEET_ID,
+        range=f"{ASISTENCIA_SHEET_NAME}!A2",
+        valueInputOption="RAW",
+        body={"values": filas}
+    ).execute()
+
+    return {"mensaje": f"Migración completa", "registros": len(filas)}
+
+
 @app.post("/reset_students")
 def reset_students():
     students.clear()
