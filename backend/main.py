@@ -30,6 +30,8 @@ FACULTAD_LON = -56.16376847335219
 RADIO_MAX_METROS = 150
 
 BITACORAS_FOLDER_ID = "18IOsdJGepbeHJQ-9jOV7ks3Hk3t5q0wB"
+ASISTENCIA_SHEET_ID = os.getenv("ASISTENCIA_SHEET_ID", "1Dw84-fNysTr4RhJt8VSJYTk-VX3e2GXYlLiv-fzrF80")
+ASISTENCIA_SHEET_NAME = "Asistencia"
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -65,38 +67,62 @@ def startup():
     except Exception as e:
         print("Error cargando estudiantes:", e)
     try:
-        cargar_asistencia_csv()
+        cargar_asistencia_sheets()
     except Exception as e:
         print("Error cargando asistencia:", e)
 
 
-def cargar_asistencia_csv():
-    archivo = "data/asistencia.csv"
-    if not os.path.isfile(archivo):
-        return
-    with open(archivo, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            email = row.get("email", "").strip().lower()
-            clase = row.get("clase", "").strip()
+def get_sheets_service():
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not creds_json:
+        raise Exception("Credenciales de Google no configuradas")
+    creds_dict = json.loads(creds_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    return build("sheets", "v4", credentials=credentials)
+
+
+def cargar_asistencia_sheets():
+    try:
+        service = get_sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=ASISTENCIA_SHEET_ID,
+            range=f"{ASISTENCIA_SHEET_NAME}!A:K"
+        ).execute()
+        rows = result.get("values", [])
+        if len(rows) <= 1:
+            return  # solo encabezado o vacío
+        headers = rows[0]
+        for row in rows[1:]:
+            # completar columnas faltantes
+            while len(row) < len(headers):
+                row.append("")
+            record = dict(zip(headers, row))
+            email = record.get("email", "").strip().lower()
+            clase = record.get("clase", "").strip()
             ya_existe = next(
                 (a for a in attendance if a["email"] == email and a.get("clase") == clase),
                 None,
             )
             if not ya_existe:
                 attendance.append({
-                    "fecha": row.get("fecha", ""),
+                    "fecha": record.get("fecha", ""),
                     "clase": clase,
-                    "nombre": row.get("nombre", ""),
-                    "apellido": row.get("apellido", ""),
+                    "nombre": record.get("nombre", ""),
+                    "apellido": record.get("apellido", ""),
                     "email": email,
-                    "codigo": row.get("codigo", ""),
-                    "hora": row.get("hora", ""),
-                    "ip": row.get("ip", ""),
-                    "user_agent": row.get("user_agent", ""),
-                    "lat": row.get("lat") or None,
-                    "lon": row.get("lon") or None,
+                    "codigo": record.get("codigo", ""),
+                    "hora": record.get("hora", ""),
+                    "ip": record.get("ip", ""),
+                    "user_agent": record.get("user_agent", ""),
+                    "lat": record.get("lat") or None,
+                    "lon": record.get("lon") or None,
                 })
+        print(f"Asistencia cargada desde Sheets: {len(attendance)} registros")
+    except Exception as e:
+        print(f"Error cargando asistencia desde Sheets: {e}")
 
 
 class Student(BaseModel):
@@ -322,48 +348,45 @@ def ver_asistencia():
     }
 
 
-def guardar_asistencia_csv(registro):
-    os.makedirs("data", exist_ok=True)
-    archivo = "data/asistencia.csv"
+def guardar_asistencia_sheets(registro):
+    try:
+        service = get_sheets_service()
+        # Verificar si existe encabezado
+        result = service.spreadsheets().values().get(
+            spreadsheetId=ASISTENCIA_SHEET_ID,
+            range=f"{ASISTENCIA_SHEET_NAME}!A1:K1"
+        ).execute()
+        if not result.get("values"):
+            headers = [["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]]
+            service.spreadsheets().values().update(
+                spreadsheetId=ASISTENCIA_SHEET_ID,
+                range=f"{ASISTENCIA_SHEET_NAME}!A1",
+                valueInputOption="RAW",
+                body={"values": headers}
+            ).execute()
 
-    existe = os.path.isfile(archivo)
-
-    with open(archivo, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "fecha",
-                "clase",
-                "nombre",
-                "apellido",
-                "email",
-                "codigo",
-                "hora",
-                "ip",
-                "user_agent",
-                "lat",
-                "lon",
-            ],
-        )
-
-        if not existe:
-            writer.writeheader()
-
-        writer.writerow(
-            {
-                "fecha": registro["fecha"],
-                "clase": registro["clase"],
-                "nombre": registro["nombre"],
-                "apellido": registro["apellido"],
-                "email": registro["email"],
-                "codigo": registro["codigo"],
-                "hora": registro["hora"],
-                "ip": registro["ip"],
-                "user_agent": registro["user_agent"],
-                "lat": registro["lat"],
-                "lon": registro["lon"],
-            }
-        )
+        fila = [[
+            registro["fecha"],
+            registro["clase"],
+            registro["nombre"],
+            registro["apellido"],
+            registro["email"],
+            registro["codigo"],
+            registro["hora"],
+            registro["ip"],
+            registro["user_agent"],
+            str(registro["lat"]) if registro["lat"] is not None else "",
+            str(registro["lon"]) if registro["lon"] is not None else "",
+        ]]
+        service.spreadsheets().values().append(
+            spreadsheetId=ASISTENCIA_SHEET_ID,
+            range=f"{ASISTENCIA_SHEET_NAME}!A1",
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": fila}
+        ).execute()
+    except Exception as e:
+        print(f"Error guardando asistencia en Sheets: {e}")
 
 
 @app.post("/attendance")
@@ -427,7 +450,7 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
     }
 
     attendance.append(registro)
-    guardar_asistencia_csv(registro)
+    guardar_asistencia_sheets(registro)
 
     return {
         "mensaje": "Asistencia registrada",
