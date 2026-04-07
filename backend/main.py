@@ -89,7 +89,7 @@ def cargar_asistencia_sheets():
         service = get_sheets_service()
         result = service.spreadsheets().values().get(
             spreadsheetId=ASISTENCIA_SHEET_ID,
-            range=f"{ASISTENCIA_SHEET_NAME}!A:L"
+            range=f"{ASISTENCIA_SHEET_NAME}!A:K"
         ).execute()
         rows = result.get("values", [])
         if len(rows) <= 1:
@@ -113,7 +113,6 @@ def cargar_asistencia_sheets():
                     "nombre": record.get("nombre", ""),
                     "apellido": record.get("apellido", ""),
                     "email": email,
-                    "cedula": record.get("cedula", ""),
                     "codigo": record.get("codigo", ""),
                     "hora": record.get("hora", ""),
                     "ip": record.get("ip", ""),
@@ -135,7 +134,6 @@ class Student(BaseModel):
 class AttendanceRequest(BaseModel):
     email: str
     codigo: str
-    cedula: Optional[str] = None
     clase: Optional[str] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
@@ -224,10 +222,9 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
             <div class="card">
                 <h1>Asistencia Taller V</h1>
                 <div class="clase">Clase: {clase}</div>
-                <p>Ingresá tu email, cédula y el código indicado en clase.</p>
+                <p>Ingresá tu email y el código indicado en clase.</p>
 
                 <input type="email" id="email" placeholder="tuemail@ejemplo.com" />
-                <input type="text" id="cedula" placeholder="Cédula (solo números, sin puntos ni guiones)" inputmode="numeric" />
                 <input type="text" id="codigo" placeholder="Código de clase" />
                 <button id="btn" onclick="registrar()" disabled>Verificando ubicación...</button>
 
@@ -268,15 +265,8 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
 
                 async function registrar() {{
                     const email = document.getElementById("email").value;
-                    const cedula = document.getElementById("cedula").value.replace(/[.\-\s]/g, "");
                     const codigo = document.getElementById("codigo").value;
                     const resultado = document.getElementById("resultado");
-
-                    if (!cedula || !/^\d+$/.test(cedula)) {{
-                        resultado.innerHTML = "❌ Ingresá tu cédula (solo números, sin puntos ni guiones).";
-                        resultado.style.color = "red";
-                        return;
-                    }}
 
                     if (!userLat || !userLon) {{
                         resultado.innerHTML = "❌ No se pudo obtener tu ubicación. Recargá la página y permitir acceso.";
@@ -290,7 +280,7 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                             headers: {{
                                 "Content-Type": "application/json"
                             }},
-                            body: JSON.stringify({{ email, cedula, codigo, clase, lat: userLat, lon: userLon }})
+                            body: JSON.stringify({{ email, codigo, clase, lat: userLat, lon: userLon }})
                         }});
 
                         const data = await response.json();
@@ -367,7 +357,7 @@ def guardar_asistencia_sheets(registro):
             range=f"{ASISTENCIA_SHEET_NAME}!A1:K1"
         ).execute()
         if not result.get("values"):
-            headers = [["fecha", "clase", "nombre", "apellido", "email", "cedula", "codigo", "hora", "ip", "user_agent", "lat", "lon"]]
+            headers = [["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]]
             service.spreadsheets().values().update(
                 spreadsheetId=ASISTENCIA_SHEET_ID,
                 range=f"{ASISTENCIA_SHEET_NAME}!A1",
@@ -381,7 +371,6 @@ def guardar_asistencia_sheets(registro):
             registro["nombre"],
             registro["apellido"],
             registro["email"],
-            registro.get("cedula", ""),
             registro["codigo"],
             registro["hora"],
             registro["ip"],
@@ -452,7 +441,6 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         "nombre": estudiante["nombre"],
         "apellido": estudiante["apellido"],
         "email": estudiante["email"],
-        "cedula": data.cedula.replace(".", "").replace("-", "").strip() if data.cedula else "",
         "codigo": codigo,
         "hora": ahora.strftime("%H:%M:%S"),
         "ip": ip_cliente,
