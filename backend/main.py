@@ -72,7 +72,12 @@ def startup():
         print("Error cargando asistencia:", e)
 
 
+_sheets_service = None
+
 def get_sheets_service():
+    global _sheets_service
+    if _sheets_service is not None:
+        return _sheets_service
     creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not creds_json:
         raise Exception("Credenciales de Google no configuradas")
@@ -81,7 +86,8 @@ def get_sheets_service():
         creds_dict,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    return build("sheets", "v4", credentials=credentials)
+    _sheets_service = build("sheets", "v4", credentials=credentials)
+    return _sheets_service
 
 
 def cargar_asistencia_sheets():
