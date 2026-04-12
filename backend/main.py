@@ -65,6 +65,7 @@ CODIGO_ACTUAL = generar_codigo()
 def startup():
     print("BASE_URL:", BASE_URL)
     print("GCP_JSON presente:", bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")))
+    print("ENV KEYS:", [k for k in os.environ.keys()])
     try:
         load_students()
     except Exception as e:
@@ -630,7 +631,7 @@ def reset_students():
 
 @app.get("/bitacoras")
 def ver_bitacoras():
-    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")
     if not creds_json:
         raise HTTPException(status_code=500, detail="Credenciales de Google no configuradas")
 
@@ -748,7 +749,7 @@ def ver_bitacoras():
 
 @app.get("/bitacora_detalle")
 def bitacora_detalle(file_id: str = Query(...)):
-    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")
     if not creds_json:
         raise HTTPException(status_code=500, detail="Credenciales no configuradas")
 
