@@ -64,7 +64,7 @@ CODIGO_ACTUAL = generar_codigo()
 @app.on_event("startup")
 def startup():
     print("BASE_URL:", BASE_URL)
-    print("GCP_JSON presente:", bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")))
+    print("GCP_JSON presente:", bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")))
     try:
         load_students()
     except Exception as e:
@@ -81,7 +81,7 @@ def get_sheets_service():
     global _sheets_service
     if _sheets_service is not None:
         return _sheets_service
-    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")
     if not creds_json:
         raise Exception("Credenciales de Google no configuradas")
     creds_dict = json.loads(creds_json)
