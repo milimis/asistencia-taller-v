@@ -50,7 +50,7 @@ if not check_login():
 # ── Constantes ────────────────────────────────────────────────────────────────
 SHEET_ID     = "1MtXr_FekHJIZiE-Cjxc3PwalNbZtqvP8O3GBJCMWDi4"
 SHEET_NAME   = "Notas"
-API_URL      = "https://asistencia-taller-v.onrender.com"
+API_URL      = "https://asistencia-taller-v-production.up.railway.app"
 TOTAL_CLASES = 32
 EXCEL        = Path(__file__).parent.parent / "backend/data/planilla.xlsx"
 
