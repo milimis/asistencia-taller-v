@@ -577,12 +577,10 @@ elif vista == "📓 Bitácoras":
         st.info("No se encontraron bitácoras en Drive.")
         st.stop()
 
-    SEMAFORO = {"verde": "🟢", "amarillo": "🟡", "rojo": "🔴"}
-
     col_v, col_a, col_r = st.columns(3)
-    verdes    = [b for b in bitacoras if b.get("semaforo") == "verde"]
-    amarillos = [b for b in bitacoras if b.get("semaforo") == "amarillo"]
-    rojos     = [b for b in bitacoras if b.get("semaforo") == "rojo"]
+    verdes    = [b for b in bitacoras if b.get("semaforo") == "🟢"]
+    amarillos = [b for b in bitacoras if b.get("semaforo") == "🟡"]
+    rojos     = [b for b in bitacoras if b.get("semaforo") == "🔴"]
     col_v.metric("🟢 Al día", len(verdes))
     col_a.metric("🟡 Atrasadas", len(amarillos))
     col_r.metric("🔴 Sin actualizar", len(rojos))
@@ -593,13 +591,11 @@ elif vista == "📓 Bitácoras":
 
     filas_bit = []
     for b in bitacoras:
-        sem = b.get("semaforo", "rojo")
-        icono = SEMAFORO.get(sem, "🔴")
         filas_bit.append({
-            "Estado": icono,
+            "Estado": b.get("semaforo", "🔴"),
             "Nombre": b.get("nombre", "—"),
-            "Última modificación": b.get("modificado", "—"),
-            "Ver": b.get("url", ""),
+            "Última modificación": b.get("ultima_modificacion", "—"),
+            "Ver": b.get("link", ""),
         })
 
     df_bit = pd.DataFrame(filas_bit)
