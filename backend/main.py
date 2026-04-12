@@ -50,10 +50,11 @@ def generar_codigo():
 
 
 # URL base del sistema
-# En Render usa la URL pública automáticamente
-# En local cae a localhost
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv(
-    "BASE_URL", "http://localhost:8000"
+_railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+BASE_URL = (
+    os.getenv("RENDER_EXTERNAL_URL")
+    or ("https://" + _railway_domain if _railway_domain else None)
+    or os.getenv("BASE_URL", "http://localhost:8000")
 )
 
 # Código oral del día/clase
@@ -62,6 +63,8 @@ CODIGO_ACTUAL = generar_codigo()
 
 @app.on_event("startup")
 def startup():
+    print("BASE_URL:", BASE_URL)
+    print("GCP_JSON presente:", bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")))
     try:
         load_students()
     except Exception as e:
