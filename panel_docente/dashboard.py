@@ -277,7 +277,7 @@ st.sidebar.caption("Panel docente — Vespertino")
 st.sidebar.divider()
 vista = st.sidebar.radio(
     "Navegación",
-    ["📊 Resumen general", "👤 Por estudiante", "✏️ Ingresar notas"],
+    ["📊 Resumen general", "👤 Por estudiante", "✏️ Ingresar notas", "📋 Pasar lista", "📓 Bitácoras"],
     label_visibility="collapsed"
 )
 st.sidebar.divider()
@@ -487,3 +487,135 @@ elif vista == "✏️ Ingresar notas":
             save_nota_sheet(est, nota_est)
             load_notas_sheet.clear()
         st.success(f"✅ Notas de **{est['nombre']} {est['apellido']}** guardadas en Google Sheets.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA 4 — PASAR LISTA
+# ══════════════════════════════════════════════════════════════════════════════
+elif vista == "📋 Pasar lista":
+    st.title("📋 Pasar lista")
+
+    # Obtener código actual del servidor
+    try:
+        r = requests.get(f"{API_URL}/", timeout=5)
+        info = r.json()
+        codigo_actual = info.get("codigo_actual", "—")
+    except Exception:
+        codigo_actual = "Sin conexión"
+
+    col_cod, col_btn = st.columns([3, 1])
+    with col_cod:
+        st.markdown(f"## Código de hoy: `{codigo_actual}`")
+        st.caption("Dictalo en voz alta para que los estudiantes lo ingresen en el formulario.")
+    with col_btn:
+        if st.button("🔄 Nuevo código", use_container_width=True):
+            try:
+                requests.get(f"{API_URL}/nuevo_codigo", timeout=5)
+                st.rerun()
+            except Exception:
+                st.error("No se pudo generar nuevo código.")
+
+    st.divider()
+
+    clase = st.text_input("Nombre de la clase (ej: clase_04)", value="clase_04")
+
+    col_qr, col_url = st.columns([1, 2])
+    with col_qr:
+        st.markdown("**QR para proyectar:**")
+        qr_url = f"{API_URL}/qr?clase={clase}"
+        try:
+            r_qr = requests.get(qr_url, timeout=10)
+            if r_qr.status_code == 200:
+                st.image(r_qr.content, width=250)
+            else:
+                st.error("No se pudo cargar el QR.")
+        except Exception:
+            st.error("Error al conectar con el servidor.")
+    with col_url:
+        form_url = f"{API_URL}/form?clase={clase}"
+        st.markdown("**URL del formulario:**")
+        st.code(form_url)
+        st.caption("Los estudiantes también pueden entrar directamente a esta URL.")
+
+    st.divider()
+    st.markdown("### Asistencia registrada hoy")
+    try:
+        r_att = requests.get(f"{API_URL}/attendance", timeout=10)
+        if r_att.status_code == 200:
+            att_data = r_att.json().get("attendance", [])
+            from datetime import date
+            hoy = str(date.today())
+            hoy_data = [a for a in att_data if a.get("fecha", "") == hoy]
+            if hoy_data:
+                df_hoy = pd.DataFrame(hoy_data)[["hora", "apellido", "nombre", "email", "codigo"]]
+                st.dataframe(df_hoy, use_container_width=True, hide_index=True)
+                st.caption(f"Total registros hoy: {len(hoy_data)}")
+            else:
+                st.info("Aún no hay registros para hoy.")
+    except Exception:
+        st.warning("No se pudo cargar la asistencia de hoy.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA 5 — BITÁCORAS
+# ══════════════════════════════════════════════════════════════════════════════
+elif vista == "📓 Bitácoras":
+    st.title("📓 Bitácoras")
+
+    if st.button("🔄 Actualizar", use_container_width=False):
+        st.rerun()
+
+    try:
+        r = requests.get(f"{API_URL}/bitacoras", timeout=15)
+        if r.status_code != 200:
+            st.error(f"Error al cargar bitácoras: {r.status_code}")
+            st.stop()
+        bitacoras = r.json().get("bitacoras", [])
+    except Exception as e:
+        st.error(f"No se pudo conectar con el servidor: {e}")
+        st.stop()
+
+    if not bitacoras:
+        st.info("No se encontraron bitácoras en Drive.")
+        st.stop()
+
+    SEMAFORO = {"verde": "🟢", "amarillo": "🟡", "rojo": "🔴"}
+
+    col_v, col_a, col_r = st.columns(3)
+    verdes    = [b for b in bitacoras if b.get("semaforo") == "verde"]
+    amarillos = [b for b in bitacoras if b.get("semaforo") == "amarillo"]
+    rojos     = [b for b in bitacoras if b.get("semaforo") == "rojo"]
+    col_v.metric("🟢 Al día", len(verdes))
+    col_a.metric("🟡 Atrasadas", len(amarillos))
+    col_r.metric("🔴 Sin actualizar", len(rojos))
+
+    st.divider()
+
+    filtro_sem = st.selectbox("Filtrar por estado", ["Todos", "🟢 Al día", "🟡 Atrasadas", "🔴 Sin actualizar"])
+
+    filas_bit = []
+    for b in bitacoras:
+        sem = b.get("semaforo", "rojo")
+        icono = SEMAFORO.get(sem, "🔴")
+        filas_bit.append({
+            "Estado": icono,
+            "Nombre": b.get("nombre", "—"),
+            "Última modificación": b.get("modificado", "—"),
+            "Ver": b.get("url", ""),
+        })
+
+    df_bit = pd.DataFrame(filas_bit)
+
+    if filtro_sem == "🟢 Al día":
+        df_bit = df_bit[df_bit["Estado"] == "🟢"]
+    elif filtro_sem == "🟡 Atrasadas":
+        df_bit = df_bit[df_bit["Estado"] == "🟡"]
+    elif filtro_sem == "🔴 Sin actualizar":
+        df_bit = df_bit[df_bit["Estado"] == "🔴"]
+
+    st.dataframe(
+        df_bit,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Ver": st.column_config.LinkColumn("Ver en Drive", display_text="Abrir"),
+        }
+    )
