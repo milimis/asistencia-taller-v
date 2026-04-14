@@ -17,12 +17,9 @@ st.set_page_config(
 )
 
 # ── Login ──────────────────────────────────────────────────────────────────────
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager()
+cookie_manager = stx.CookieManager()
 
 def check_login():
-    cookie_manager = get_cookie_manager()
 
     # Intentar restaurar sesión desde cookie
     if not st.session_state.get("logged_in"):
@@ -306,7 +303,7 @@ st.sidebar.caption(f"📅 {TOTAL_CLASES} clases · mín. 85%")
 st.sidebar.divider()
 st.sidebar.caption(f"👤 {st.session_state.get('usuario', '')}")
 if st.sidebar.button("Cerrar sesión"):
-    get_cookie_manager().delete("taller_v_auth")
+    cookie_manager.delete("taller_v_auth")
     st.session_state.logged_in = False
     st.rerun()
 
