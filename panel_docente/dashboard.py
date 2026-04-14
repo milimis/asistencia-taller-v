@@ -5,9 +5,8 @@ import json
 import os
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
-import extra_streamlit_components as stx
+from streamlit_cookies_controller import CookieController
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -17,14 +16,12 @@ st.set_page_config(
 )
 
 # ── Login ──────────────────────────────────────────────────────────────────────
-cookie_manager = stx.CookieManager()
+_cookies = CookieController()
 
 def check_login():
-
     # Intentar restaurar sesión desde cookie
     if not st.session_state.get("logged_in"):
-        cookies = cookie_manager.get_all()
-        auth_user = cookies.get("taller_v_auth") if cookies else None
+        auth_user = _cookies.get("taller_v_auth")
         if auth_user:
             usuarios = dict(st.secrets.get("users", {}))
             if auth_user in usuarios:
@@ -53,8 +50,7 @@ def check_login():
         if usuario in usuarios and usuarios[usuario] == password:
             st.session_state.logged_in = True
             st.session_state.usuario = usuario
-            expiry = datetime.now() + timedelta(hours=8)
-            cookie_manager.set("taller_v_auth", usuario, expires_at=expiry)
+            _cookies.set("taller_v_auth", usuario, max_age=28800)  # 8 horas
             st.rerun()
         else:
             st.error("Usuario o contraseña incorrectos.")
@@ -303,7 +299,7 @@ st.sidebar.caption(f"📅 {TOTAL_CLASES} clases · mín. 85%")
 st.sidebar.divider()
 st.sidebar.caption(f"👤 {st.session_state.get('usuario', '')}")
 if st.sidebar.button("Cerrar sesión"):
-    cookie_manager.delete("taller_v_auth")
+    _cookies.remove("taller_v_auth")
     st.session_state.logged_in = False
     st.rerun()
 
@@ -535,8 +531,11 @@ elif vista == "📋 Pasar lista":
     st.divider()
 
     if "nombre_clase" not in st.session_state:
-        st.session_state["nombre_clase"] = "clase_04"
+        guardado = _cookies.get("ultima_clase")
+        st.session_state["nombre_clase"] = guardado if guardado else "clase_04"
     clase = st.text_input("Nombre de la clase (ej: clase_04)", key="nombre_clase")
+    if clase != _cookies.get("ultima_clase"):
+        _cookies.set("ultima_clase", clase, max_age=86400)  # 24 horas
 
     col_qr, col_url = st.columns([1, 2])
     with col_qr:

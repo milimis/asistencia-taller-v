@@ -4,4 +4,4 @@ gspread>=6.0.0
 google-auth>=2.28.0
 openpyxl>=3.1.0
 requests>=2.31.0
-extra-streamlit-components>=0.1.60
+streamlit-cookies-controller>=0.4.1
