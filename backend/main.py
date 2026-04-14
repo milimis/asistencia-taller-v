@@ -57,8 +57,31 @@ BASE_URL = (
     or os.getenv("BASE_URL", "http://localhost:8000")
 )
 
-# Código oral del día/clase
-CODIGO_ACTUAL = generar_codigo()
+# Código oral del día/clase — persiste en archivo para sobrevivir reinicios
+CODIGO_FILE = "data/codigo_actual.txt"
+
+def _cargar_codigo():
+    try:
+        if os.path.exists(CODIGO_FILE):
+            with open(CODIGO_FILE) as f:
+                c = f.read().strip()
+                if c:
+                    return c
+    except Exception:
+        pass
+    return generar_codigo()
+
+def _guardar_codigo(codigo):
+    os.makedirs("data", exist_ok=True)
+    with open(CODIGO_FILE, "w") as f:
+        f.write(codigo)
+
+def _normalizar_codigo(c: str) -> str:
+    """Tolera minúsculas, distintos tipos de guiones y espacios."""
+    return c.strip().upper().replace("–", "-").replace("—", "-").replace(" ", "")
+
+CODIGO_ACTUAL = _cargar_codigo()
+_guardar_codigo(CODIGO_ACTUAL)
 
 
 @app.on_event("startup")
@@ -235,7 +258,7 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                 <p>Ingresá tu email y el código indicado en clase.</p>
 
                 <input type="email" id="email" placeholder="tuemail@ejemplo.com" />
-                <input type="text" id="codigo" placeholder="Código de clase" />
+                <input type="text" id="codigo" placeholder="Código de clase" oninput="this.value=this.value.toUpperCase()" autocomplete="off" autocorrect="off" spellcheck="false" />
                 <button id="btn" onclick="registrar()" disabled>Verificando ubicación...</button>
 
                 <div id="geo-status">📍 Obteniendo tu ubicación...</div>
@@ -404,22 +427,25 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
     email = data.email.strip().lower()
     codigo = data.codigo.strip()
 
-    if codigo != CODIGO_ACTUAL:
+    if _normalizar_codigo(codigo) != _normalizar_codigo(CODIGO_ACTUAL):
         raise HTTPException(status_code=400, detail="Código incorrecto")
 
     estudiante = next((s for s in students if s["email"] == email), None)
     if not estudiante:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
 
-    if data.lat is None or data.lon is None:
-        raise HTTPException(status_code=400, detail="No se recibió la ubicación. Recargá la página y permitir acceso a la ubicación.")
+    bypass_geo = os.getenv("BYPASS_GEO", "false").lower() == "true"
 
-    distancia = haversine(data.lat, data.lon, FACULTAD_LAT, FACULTAD_LON)
-    if distancia > RADIO_MAX_METROS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tu ubicación está a {int(distancia)} metros de la facultad. Debés estar presente en el edificio para registrar asistencia."
-        )
+    if not bypass_geo:
+        if data.lat is None or data.lon is None:
+            raise HTTPException(status_code=400, detail="No se recibió la ubicación. Recargá la página y permitir acceso a la ubicación.")
+
+        distancia = haversine(data.lat, data.lon, FACULTAD_LAT, FACULTAD_LON)
+        if distancia > RADIO_MAX_METROS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tu ubicación está a {int(distancia)} metros de la facultad. Debés estar presente en el edificio para registrar asistencia."
+            )
 
     clase_actual = data.clase if data.clase else "sin_clase"
 
@@ -518,7 +544,7 @@ def load_students():
 def nuevo_codigo():
     global CODIGO_ACTUAL
     CODIGO_ACTUAL = generar_codigo()
-
+    _guardar_codigo(CODIGO_ACTUAL)
     return {
         "mensaje": "Nuevo código generado",
         "codigo_actual": CODIGO_ACTUAL,
