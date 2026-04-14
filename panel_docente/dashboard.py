@@ -516,7 +516,9 @@ elif vista == "📋 Pasar lista":
 
     st.divider()
 
-    clase = st.text_input("Nombre de la clase (ej: clase_04)", value="clase_04")
+    if "nombre_clase" not in st.session_state:
+        st.session_state["nombre_clase"] = "clase_04"
+    clase = st.text_input("Nombre de la clase (ej: clase_04)", key="nombre_clase")
 
     col_qr, col_url = st.columns([1, 2])
     with col_qr:
