@@ -532,7 +532,7 @@ elif vista == "📋 Pasar lista":
 
     if "nombre_clase" not in st.session_state:
         guardado = _cookies.get("ultima_clase")
-        st.session_state["nombre_clase"] = guardado if guardado else "clase_04"
+        st.session_state["nombre_clase"] = guardado if guardado else ""
     clase = st.text_input("Nombre de la clase (ej: clase_04)", key="nombre_clase")
     if clase != _cookies.get("ultima_clase"):
         _cookies.set("ultima_clase", clase, max_age=86400)  # 24 horas
