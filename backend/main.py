@@ -447,14 +447,18 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
             )
 
     clase_actual = data.clase if data.clase else "sin_clase"
+    hoy = datetime.now(TZ_UY).strftime("%Y-%m-%d")
 
     ya_registrado = next(
-        (a for a in attendance if a["email"] == email and a.get("clase") == clase_actual),
+        (a for a in attendance
+         if a["email"] == email
+         and a.get("clase") == clase_actual
+         and a.get("fecha") == hoy),
         None,
     )
 
     if ya_registrado:
-        raise HTTPException(status_code=400, detail="La asistencia ya fue registrada")
+        raise HTTPException(status_code=400, detail="La asistencia ya fue registrada hoy")
 
     # Detectar IP real
     forwarded_for = request.headers.get("x-forwarded-for")
