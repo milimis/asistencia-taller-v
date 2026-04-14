@@ -4,9 +4,10 @@ import gspread
 import json
 import os
 import requests
+import hashlib
+import time
 from pathlib import Path
 from google.oauth2.service_account import Credentials
-from streamlit_cookies_controller import CookieController
 
 # ── Configuración ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -16,17 +17,22 @@ st.set_page_config(
 )
 
 # ── Login ──────────────────────────────────────────────────────────────────────
-_cookies = CookieController()
+def _hacer_token(usuario: str) -> str:
+    """Token válido por 8 horas basado en el bloque horario actual."""
+    bloque = int(time.time()) // (8 * 3600)
+    return hashlib.sha256(f"{usuario}:taller_v:{bloque}".encode()).hexdigest()[:20]
 
 def check_login():
-    # Intentar restaurar sesión desde cookie
+    # Restaurar sesión desde query param en la URL
     if not st.session_state.get("logged_in"):
-        auth_user = _cookies.get("taller_v_auth")
-        if auth_user:
+        token = st.query_params.get("t", "")
+        if token:
             usuarios = dict(st.secrets.get("users", {}))
-            if auth_user in usuarios:
-                st.session_state.logged_in = True
-                st.session_state.usuario = auth_user
+            for u in usuarios:
+                if token == _hacer_token(u):
+                    st.session_state.logged_in = True
+                    st.session_state.usuario = u
+                    break
 
     if st.session_state.get("logged_in"):
         return True
@@ -50,7 +56,7 @@ def check_login():
         if usuario in usuarios and usuarios[usuario] == password:
             st.session_state.logged_in = True
             st.session_state.usuario = usuario
-            _cookies.set("taller_v_auth", usuario, max_age=28800)  # 8 horas
+            st.query_params["t"] = _hacer_token(usuario)
             st.rerun()
         else:
             st.error("Usuario o contraseña incorrectos.")
@@ -299,7 +305,7 @@ st.sidebar.caption(f"📅 {TOTAL_CLASES} clases · mín. 85%")
 st.sidebar.divider()
 st.sidebar.caption(f"👤 {st.session_state.get('usuario', '')}")
 if st.sidebar.button("Cerrar sesión"):
-    _cookies.remove("taller_v_auth")
+    st.query_params.clear()
     st.session_state.logged_in = False
     st.rerun()
 
@@ -531,11 +537,8 @@ elif vista == "📋 Pasar lista":
     st.divider()
 
     if "nombre_clase" not in st.session_state:
-        guardado = _cookies.get("ultima_clase")
-        st.session_state["nombre_clase"] = guardado if guardado else ""
-    clase = st.text_input("Nombre de la clase (ej: clase_04)", key="nombre_clase")
-    if clase != _cookies.get("ultima_clase"):
-        _cookies.set("ultima_clase", clase, max_age=86400)  # 24 horas
+        st.session_state["nombre_clase"] = ""
+    clase = st.text_input("Nombre de la clase (ej: clase_05)", key="nombre_clase")
 
     col_qr, col_url = st.columns([1, 2])
     with col_qr:
