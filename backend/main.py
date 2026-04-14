@@ -45,8 +45,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def generar_codigo():
     letras_numeros = string.ascii_uppercase + string.digits
-    sufijo = "".join(random.choices(letras_numeros, k=4))
-    return f"TALLER-{sufijo}"
+    return "".join(random.choices(letras_numeros, k=6))
 
 
 # URL base del sistema
@@ -258,7 +257,7 @@ def formulario_asistencia(clase: str = Query(default="sin_clase")):
                 <p>Ingresá tu email y el código indicado en clase.</p>
 
                 <input type="email" id="email" placeholder="tuemail@ejemplo.com" />
-                <input type="text" id="codigo" placeholder="Código de clase" oninput="this.value=this.value.toUpperCase()" autocomplete="off" autocorrect="off" spellcheck="false" />
+                <input type="text" id="codigo" placeholder="Ej: A3BX7K" oninput="this.value=this.value.toUpperCase()" autocomplete="off" autocorrect="off" spellcheck="false" maxlength="6" />
                 <button id="btn" onclick="registrar()" disabled>Verificando ubicación...</button>
 
                 <div id="geo-status">📍 Obteniendo tu ubicación...</div>
