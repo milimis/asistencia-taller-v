@@ -550,9 +550,8 @@ elif vista == "📋 Pasar lista":
     col_dl, col_sync, col_reload = st.columns(3)
     with col_dl:
         st.markdown("**⬇️ Descargar CSV**")
-        from datetime import datetime as dt_
-        import pytz as tz_
-        hoy_str = dt_.now(tz_.timezone("America/Montevideo")).strftime("%Y-%m-%d")
+        from datetime import datetime as dt_, timezone as tz_, timedelta
+        hoy_str = dt_.now(tz_(timedelta(hours=-3))).strftime("%Y-%m-%d")
         st.markdown(f"[Descargar asistencia de hoy]({API_URL}/descargar_asistencia?fecha={hoy_str})")
         st.markdown(f"[Descargar historial completo]({API_URL}/descargar_asistencia)")
     with col_sync:
@@ -584,9 +583,8 @@ elif vista == "📋 Pasar lista":
         r_att = requests.get(f"{API_URL}/attendance", timeout=10)
         if r_att.status_code == 200:
             att_data = r_att.json().get("attendance", [])
-            from datetime import datetime
-            import pytz
-            hoy = datetime.now(pytz.timezone("America/Montevideo")).strftime("%Y-%m-%d")
+            from datetime import datetime, timezone, timedelta
+            hoy = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%d")
             hoy_data = [a for a in att_data if a.get("fecha", "") == hoy]
             if hoy_data:
                 df_hoy = pd.DataFrame(hoy_data)[["hora", "apellido", "nombre", "email", "codigo"]]
