@@ -238,22 +238,8 @@ def load_students():
     return estudiantes
 
 # ── Asistencia desde API ──────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_asistencia():
-    # Primero intentar CSV local
-    csv_path = Path(__file__).parent.parent / "backend/data/asistencia.csv"
-    if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        resultado = {}
-        for email, group in df.groupby("email"):
-            apellido = str(group["apellido"].iloc[0]).strip()
-            nombre   = str(group["nombre"].iloc[0]).strip()
-            resultado[normalizar(apellido.split()[0])] = {
-                "apellido": apellido, "nombre": nombre,
-                "clases": len(group["fecha"].unique())
-            }
-        return resultado
-    # Fallback: API remota
     try:
         r = requests.get(f"{API_URL}/attendance", timeout=10)
         if r.status_code == 200:
@@ -559,13 +545,48 @@ elif vista == "📋 Pasar lista":
         st.caption("Los estudiantes también pueden entrar directamente a esta URL.")
 
     st.divider()
+
+    # Botones de descarga y sync
+    col_dl, col_sync, col_reload = st.columns(3)
+    with col_dl:
+        st.markdown("**⬇️ Descargar CSV**")
+        from datetime import datetime as dt_
+        import pytz as tz_
+        hoy_str = dt_.now(tz_.timezone("America/Montevideo")).strftime("%Y-%m-%d")
+        st.markdown(f"[Descargar asistencia de hoy]({API_URL}/descargar_asistencia?fecha={hoy_str})")
+        st.markdown(f"[Descargar historial completo]({API_URL}/descargar_asistencia)")
+    with col_sync:
+        st.markdown("**🔄 Sincronizar a Sheets**")
+        if st.button("Subir todo a Sheets ahora", use_container_width=True):
+            try:
+                r_sync = requests.post(f"{API_URL}/sync_to_sheets", timeout=30)
+                if r_sync.status_code == 200:
+                    st.success(f"✅ {r_sync.json().get('mensaje', 'OK')}")
+                else:
+                    st.error("Error al sincronizar")
+            except Exception:
+                st.error("No se pudo conectar con el servidor.")
+    with col_reload:
+        st.markdown("**♻️ Recargar desde Sheets**")
+        if st.button("Recargar asistencia", use_container_width=True):
+            try:
+                r_rel = requests.post(f"{API_URL}/reload_attendance", timeout=15)
+                if r_rel.status_code == 200:
+                    st.success(f"✅ {r_rel.json().get('mensaje', 'OK')}")
+                else:
+                    st.error("Error al recargar")
+            except Exception:
+                st.error("No se pudo conectar con el servidor.")
+
+    st.divider()
     st.markdown("### Asistencia registrada hoy")
     try:
         r_att = requests.get(f"{API_URL}/attendance", timeout=10)
         if r_att.status_code == 200:
             att_data = r_att.json().get("attendance", [])
-            from datetime import date
-            hoy = str(date.today())
+            from datetime import datetime
+            import pytz
+            hoy = datetime.now(pytz.timezone("America/Montevideo")).strftime("%Y-%m-%d")
             hoy_data = [a for a in att_data if a.get("fecha", "") == hoy]
             if hoy_data:
                 df_hoy = pd.DataFrame(hoy_data)[["hora", "apellido", "nombre", "email", "codigo"]]

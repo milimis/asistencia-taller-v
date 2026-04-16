@@ -11,12 +11,16 @@ import pytz
 import json
 import re
 import qrcode
+import threading
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 import io
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 TZ_UY = pytz.timezone("America/Montevideo")
+
+# Lock para evitar race conditions cuando 69 estudiantes registran al mismo tiempo
+_attendance_lock = threading.Lock()
 
 app = FastAPI()
 
@@ -95,7 +99,9 @@ def startup():
     try:
         cargar_asistencia_sheets()
     except Exception as e:
-        print("Error cargando asistencia:", e)
+        print("Error cargando asistencia desde Sheets:", e)
+    # CSV local como respaldo: agrega registros que puedan faltar en Sheets
+    cargar_asistencia_csv()
 
 
 _sheets_service = None
@@ -134,8 +140,10 @@ def cargar_asistencia_sheets():
             record = dict(zip(headers, row))
             email = record.get("email", "").strip().lower()
             clase = record.get("clase", "").strip()
+            fecha = record.get("fecha", "").strip()
             ya_existe = next(
-                (a for a in attendance if a["email"] == email and a.get("clase") == clase),
+                (a for a in attendance
+                 if a["email"] == email and a.get("clase") == clase and a.get("fecha") == fecha),
                 None,
             )
             if not ya_existe:
@@ -380,6 +388,59 @@ def ver_asistencia():
     }
 
 
+CSV_ASISTENCIA = "data/asistencia_registro.csv"
+CSV_CAMPOS = ["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]
+
+def guardar_asistencia_csv(registro):
+    """Guarda el registro en CSV local. Rápido y siempre funciona."""
+    os.makedirs("data", exist_ok=True)
+    escribir_header = not os.path.exists(CSV_ASISTENCIA)
+    with open(CSV_ASISTENCIA, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_CAMPOS, extrasaction="ignore")
+        if escribir_header:
+            writer.writeheader()
+        writer.writerow({
+            **registro,
+            "lat": str(registro["lat"]) if registro["lat"] is not None else "",
+            "lon": str(registro["lon"]) if registro["lon"] is not None else "",
+        })
+
+
+def cargar_asistencia_csv():
+    """Carga registros del CSV local al arrancar (complementa lo de Sheets)."""
+    if not os.path.exists(CSV_ASISTENCIA):
+        return
+    try:
+        with open(CSV_ASISTENCIA, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for record in reader:
+                email = record.get("email", "").strip().lower()
+                clase = record.get("clase", "").strip()
+                fecha = record.get("fecha", "").strip()
+                ya_existe = next(
+                    (a for a in attendance
+                     if a["email"] == email and a.get("clase") == clase and a.get("fecha") == fecha),
+                    None,
+                )
+                if not ya_existe:
+                    attendance.append({
+                        "fecha": fecha,
+                        "clase": clase,
+                        "nombre": record.get("nombre", ""),
+                        "apellido": record.get("apellido", ""),
+                        "email": email,
+                        "codigo": record.get("codigo", ""),
+                        "hora": record.get("hora", ""),
+                        "ip": record.get("ip", ""),
+                        "user_agent": record.get("user_agent", ""),
+                        "lat": record.get("lat") or None,
+                        "lon": record.get("lon") or None,
+                    })
+        print(f"Asistencia cargada desde CSV local: {len(attendance)} registros totales")
+    except Exception as e:
+        print(f"Error cargando CSV local: {e}")
+
+
 def guardar_asistencia_sheets(registro):
     try:
         service = get_sheets_service()
@@ -449,21 +510,9 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
     clase_actual = data.clase if data.clase else "sin_clase"
     hoy = datetime.now(TZ_UY).strftime("%Y-%m-%d")
 
-    ya_registrado = next(
-        (a for a in attendance
-         if a["email"] == email
-         and a.get("clase") == clase_actual
-         and a.get("fecha") == hoy),
-        None,
-    )
-
-    if ya_registrado:
-        raise HTTPException(status_code=400, detail="La asistencia ya fue registrada hoy")
-
     # Detectar IP real
     forwarded_for = request.headers.get("x-forwarded-for")
     cf_ip = request.headers.get("cf-connecting-ip")
-
     if cf_ip:
         ip_cliente = cf_ip
     elif forwarded_for:
@@ -488,8 +537,29 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
         "lon": data.lon,
     }
 
-    attendance.append(registro)
-    guardar_asistencia_sheets(registro)
+    # Lock: evita que dos requests simultáneos del mismo email pasen el chequeo
+    with _attendance_lock:
+        ya_registrado = next(
+            (a for a in attendance
+             if a["email"] == email
+             and a.get("clase") == clase_actual
+             and a.get("fecha") == hoy),
+            None,
+        )
+        if ya_registrado:
+            raise HTTPException(status_code=400, detail="La asistencia ya fue registrada hoy")
+
+        # 1. Guardar en memoria (inmediato)
+        attendance.append(registro)
+
+    # 2. Guardar en CSV local (rápido, siempre funciona, backup confiable)
+    try:
+        guardar_asistencia_csv(registro)
+    except Exception as e:
+        print(f"Error guardando CSV: {e}")
+
+    # 3. Intentar Sheets en segundo plano (no bloquea la respuesta)
+    threading.Thread(target=guardar_asistencia_sheets, args=(registro,), daemon=True).start()
 
     return {
         "mensaje": "Asistencia registrada",
@@ -594,6 +664,50 @@ def descargar_asistencia(fecha: str = Query(default=None)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={nombre_archivo}"}
     )
+
+
+@app.post("/sync_to_sheets")
+def sync_to_sheets():
+    """Sube todos los registros en memoria a Google Sheets (limpia y reescribe)."""
+    if not attendance:
+        return {"mensaje": "No hay registros en memoria para sincronizar", "total": 0}
+    try:
+        service = get_sheets_service()
+        # Escribir encabezado
+        headers = [["fecha", "clase", "nombre", "apellido", "email", "codigo", "hora", "ip", "user_agent", "lat", "lon"]]
+        service.spreadsheets().values().update(
+            spreadsheetId=ASISTENCIA_SHEET_ID,
+            range=f"{ASISTENCIA_SHEET_NAME}!A1",
+            valueInputOption="RAW",
+            body={"values": headers}
+        ).execute()
+        # Escribir todos los registros
+        filas = [[
+            r["fecha"], r["clase"], r["nombre"], r["apellido"], r["email"],
+            r["codigo"], r["hora"], r["ip"], r["user_agent"],
+            str(r["lat"]) if r["lat"] is not None else "",
+            str(r["lon"]) if r["lon"] is not None else "",
+        ] for r in attendance]
+        service.spreadsheets().values().update(
+            spreadsheetId=ASISTENCIA_SHEET_ID,
+            range=f"{ASISTENCIA_SHEET_NAME}!A2",
+            valueInputOption="RAW",
+            body={"values": filas}
+        ).execute()
+        return {"mensaje": f"Sincronizados {len(filas)} registros a Google Sheets", "total": len(filas)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error sincronizando: {e}")
+
+
+@app.post("/reload_attendance")
+def reload_attendance():
+    """Recarga la asistencia desde Google Sheets sin reiniciar el servidor."""
+    attendance.clear()
+    try:
+        cargar_asistencia_sheets()
+        return {"mensaje": "Asistencia recargada desde Sheets", "total": len(attendance)}
+    except Exception as e:
+        return {"mensaje": f"Error recargando: {e}", "total": 0}
 
 
 @app.post("/reset_attendance")
