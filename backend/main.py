@@ -28,6 +28,9 @@ app = FastAPI()
 students = []
 attendance = []
 
+# Estado del registro: True = abierto, False = cerrado
+registro_abierto = True
+
 # Coordenadas de la facultad y radio máximo permitido
 FACULTAD_LAT = -34.910281089334184
 FACULTAD_LON = -56.16376847335219
@@ -185,6 +188,7 @@ def home():
         "mensaje": "Servidor de asistencia funcionando",
         "codigo_actual": CODIGO_ACTUAL,
         "base_url": BASE_URL,
+        "registro_abierto": registro_abierto,
     }
 
 
@@ -484,6 +488,9 @@ def guardar_asistencia_sheets(registro):
 
 @app.post("/attendance")
 def registrar_asistencia(data: AttendanceRequest, request: Request):
+    if not registro_abierto:
+        raise HTTPException(status_code=403, detail="El registro de asistencia está cerrado.")
+
     email = data.email.strip().lower()
     codigo = data.codigo.strip()
 
@@ -615,13 +622,62 @@ def load_students():
 
 @app.get("/nuevo_codigo")
 def nuevo_codigo():
-    global CODIGO_ACTUAL
+    global CODIGO_ACTUAL, registro_abierto
     CODIGO_ACTUAL = generar_codigo()
     _guardar_codigo(CODIGO_ACTUAL)
+    registro_abierto = True  # nuevo código = registro abierto
     return {
         "mensaje": "Nuevo código generado",
         "codigo_actual": CODIGO_ACTUAL,
+        "registro_abierto": registro_abierto,
     }
+
+
+@app.post("/abrir_registro")
+def abrir_registro():
+    global registro_abierto
+    registro_abierto = True
+    return {"mensaje": "Registro abierto", "registro_abierto": True}
+
+
+@app.post("/cerrar_registro")
+def cerrar_registro():
+    global registro_abierto
+    registro_abierto = False
+    return {"mensaje": "Registro cerrado", "registro_abierto": False}
+
+
+@app.delete("/attendance")
+def borrar_registro(email: str = Query(...), clase: str = Query(...), fecha: str = Query(...)):
+    """Elimina un registro específico de la memoria y del CSV."""
+    global attendance
+    email = email.strip().lower()
+    antes = len(attendance)
+    attendance = [
+        a for a in attendance
+        if not (a["email"] == email and a.get("clase") == clase and a.get("fecha") == fecha)
+    ]
+    eliminados = antes - len(attendance)
+    if eliminados == 0:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    # Reescribir CSV sin ese registro
+    try:
+        if os.path.exists(CSV_ASISTENCIA):
+            registros_csv = []
+            with open(CSV_ASISTENCIA, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if not (row.get("email","").strip().lower() == email
+                            and row.get("clase","").strip() == clase
+                            and row.get("fecha","").strip() == fecha):
+                        registros_csv.append(row)
+            with open(CSV_ASISTENCIA, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_CAMPOS, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(registros_csv)
+    except Exception as e:
+        print(f"Error actualizando CSV al borrar: {e}")
+    return {"mensaje": f"Registro eliminado", "eliminados": eliminados}
 
 
 @app.get("/qr")

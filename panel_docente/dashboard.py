@@ -500,13 +500,15 @@ elif vista == "✏️ Ingresar notas":
 elif vista == "📋 Pasar lista":
     st.title("📋 Pasar lista")
 
-    # Obtener código actual del servidor
+    # Obtener estado del servidor
     try:
         r = requests.get(f"{API_URL}/", timeout=5)
         info = r.json()
         codigo_actual = info.get("codigo_actual", "—")
+        registro_abierto = info.get("registro_abierto", True)
     except Exception:
         codigo_actual = "Sin conexión"
+        registro_abierto = None
 
     col_cod, col_btn = st.columns([3, 1])
     with col_cod:
@@ -519,6 +521,27 @@ elif vista == "📋 Pasar lista":
                 st.rerun()
             except Exception:
                 st.error("No se pudo generar nuevo código.")
+
+    # Estado del registro + botones abrir/cerrar
+    st.divider()
+    if registro_abierto is True:
+        st.success("🟢 Registro **ABIERTO** — los estudiantes pueden registrarse")
+        if st.button("🔴 Cerrar registro", use_container_width=False):
+            try:
+                requests.post(f"{API_URL}/cerrar_registro", timeout=5)
+                st.rerun()
+            except Exception:
+                st.error("No se pudo cerrar el registro.")
+    elif registro_abierto is False:
+        st.error("🔴 Registro **CERRADO** — los estudiantes NO pueden registrarse")
+        if st.button("🟢 Abrir registro", use_container_width=False):
+            try:
+                requests.post(f"{API_URL}/abrir_registro", timeout=5)
+                st.rerun()
+            except Exception:
+                st.error("No se pudo abrir el registro.")
+    else:
+        st.warning("Sin conexión con el servidor")
 
     st.divider()
 
@@ -585,11 +608,36 @@ elif vista == "📋 Pasar lista":
             att_data = r_att.json().get("attendance", [])
             from datetime import datetime, timezone, timedelta
             hoy = datetime.now(timezone(timedelta(hours=-3))).strftime("%Y-%m-%d")
-            hoy_data = [a for a in att_data if a.get("fecha", "") == hoy]
+            hoy_data = sorted(
+                [a for a in att_data if a.get("fecha", "") == hoy],
+                key=lambda x: x.get("hora", "")
+            )
             if hoy_data:
-                df_hoy = pd.DataFrame(hoy_data)[["hora", "apellido", "nombre", "email", "codigo"]]
-                st.dataframe(df_hoy, use_container_width=True, hide_index=True)
                 st.caption(f"Total registros hoy: {len(hoy_data)}")
+                for i, reg in enumerate(hoy_data):
+                    col_info, col_del = st.columns([10, 1])
+                    with col_info:
+                        st.markdown(
+                            f"`{reg.get('hora','')}` &nbsp; **{reg.get('apellido','')} {reg.get('nombre','')}** "
+                            f"&nbsp; <span style='color:#888;font-size:0.85em'>{reg.get('clase','')}</span>",
+                            unsafe_allow_html=True
+                        )
+                    with col_del:
+                        if st.button("🗑️", key=f"del_{i}_{reg.get('email')}",
+                                     help=f"Eliminar registro de {reg.get('apellido')} {reg.get('nombre')}"):
+                            try:
+                                r_del = requests.delete(
+                                    f"{API_URL}/attendance",
+                                    params={"email": reg.get("email"), "clase": reg.get("clase"), "fecha": reg.get("fecha")},
+                                    timeout=5
+                                )
+                                if r_del.status_code == 200:
+                                    st.success(f"Eliminado: {reg.get('apellido')} {reg.get('nombre')}")
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo eliminar")
+                            except Exception:
+                                st.error("Error de conexión")
             else:
                 st.info("Aún no hay registros para hoy.")
     except Exception:
