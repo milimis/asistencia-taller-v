@@ -67,7 +67,7 @@ if not check_login():
     st.stop()
 
 # ── Constantes ────────────────────────────────────────────────────────────────
-SHEET_ID     = "1MtXr_FekHJIZiE-Cjxc3PwalNbZtqvP8O3GBJCMWDi4"
+SHEET_ID     = "1Dw84-fNysTr4RhJt8VSJYTk-VX3e2GXYlLiv-fzrF80"
 SHEET_NAME   = "Notas"
 API_URL      = "https://asistencia-taller-v-production.up.railway.app"
 TOTAL_CLASES = 32
