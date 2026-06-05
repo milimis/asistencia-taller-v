@@ -12,6 +12,7 @@ import json
 import re
 import qrcode
 import threading
+import queue
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 import io
 from google.oauth2 import service_account
@@ -21,6 +22,21 @@ TZ_UY = pytz.timezone("America/Montevideo")
 
 # Lock para evitar race conditions cuando 69 estudiantes registran al mismo tiempo
 _attendance_lock = threading.Lock()
+
+# Cola para escrituras a Sheets: un único hilo escritor evita el segfault por concurrencia
+_sheets_queue: queue.Queue = queue.Queue()
+
+def _sheets_worker():
+    while True:
+        registro = _sheets_queue.get()
+        try:
+            _guardar_asistencia_sheets_sync(registro)
+        except Exception as e:
+            print(f"Error en sheets_worker: {e}")
+        finally:
+            _sheets_queue.task_done()
+
+threading.Thread(target=_sheets_worker, daemon=True).start()
 
 app = FastAPI()
 
@@ -107,22 +123,20 @@ def startup():
     cargar_asistencia_csv()
 
 
-_sheets_service = None
+_sheets_creds_json = None
 
 def get_sheets_service():
-    global _sheets_service
-    if _sheets_service is not None:
-        return _sheets_service
-    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")
-    if not creds_json:
+    global _sheets_creds_json
+    if _sheets_creds_json is None:
+        _sheets_creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") or os.getenv("GCP_JSON")
+    if not _sheets_creds_json:
         raise Exception("Credenciales de Google no configuradas")
-    creds_dict = json.loads(creds_json)
+    creds_dict = json.loads(_sheets_creds_json)
     credentials = service_account.Credentials.from_service_account_info(
         creds_dict,
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
-    _sheets_service = build("sheets", "v4", credentials=credentials)
-    return _sheets_service
+    return build("sheets", "v4", credentials=credentials)
 
 
 def cargar_asistencia_sheets():
@@ -445,7 +459,7 @@ def cargar_asistencia_csv():
         print(f"Error cargando CSV local: {e}")
 
 
-def guardar_asistencia_sheets(registro):
+def _guardar_asistencia_sheets_sync(registro):
     try:
         service = get_sheets_service()
         # Verificar si existe encabezado
@@ -565,8 +579,8 @@ def registrar_asistencia(data: AttendanceRequest, request: Request):
     except Exception as e:
         print(f"Error guardando CSV: {e}")
 
-    # 3. Intentar Sheets en segundo plano (no bloquea la respuesta)
-    threading.Thread(target=guardar_asistencia_sheets, args=(registro,), daemon=True).start()
+    # 3. Encolar escritura a Sheets (un único hilo escritor evita segfault por concurrencia SSL)
+    _sheets_queue.put(registro)
 
     return {
         "mensaje": "Asistencia registrada",
